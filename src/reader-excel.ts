@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 import type {
-  CellKind, CellValue, ResolvedSpec, SheetModel, WorkbookReader,
+  CellKind, CellValue, ResolvedSpec, SheetModel, TableRequest, WorkbookReader,
 } from './types.js';
 import { buildModel, type RawCell } from './model.js';
 
@@ -39,7 +39,7 @@ function scalar(v: unknown): CellValue {
   return v as CellValue;
 }
 
-/** Extracts one already-parsed worksheet. Shared by read() and readWorkbook(). */
+/** Extracts one table from an already-parsed worksheet. */
 function modelFrom(ws: ExcelJS.Worksheet, path: string, spec: ResolvedSpec): SheetModel {
   const headers: { name: string; colNum: number }[] = [];
   ws.getRow(spec.headerRow).eachCell({ includeEmpty: false }, (cell, colNum) => {
@@ -50,8 +50,12 @@ function modelFrom(ws: ExcelJS.Worksheet, path: string, spec: ResolvedSpec): She
     throw new Error(`sheet-verify: no headers found on row ${spec.headerRow} of "${ws.name}" in ${path}`);
   }
 
+  // endRow bounds a table that stops short of the sheet's last row, so an
+  // info block does not swallow the data table underneath it.
+  const last = spec.endRow > 0 ? Math.min(spec.endRow, ws.rowCount) : ws.rowCount;
+
   const rows: { rowNum: number; cells: Map<number, RawCell> }[] = [];
-  for (let r = spec.headerRow + 1; r <= ws.rowCount; r++) {
+  for (let r = spec.headerRow + 1; r <= last; r++) {
     const row = ws.getRow(r);
     const cells = new Map<number, RawCell>();
     for (const { colNum } of headers) {
@@ -92,7 +96,7 @@ export class ExcelReader implements WorkbookReader {
 
   async readWorkbook(
     path: string,
-    specFor: (sheet: string) => ResolvedSpec | null,
+    tablesFor: (sheet: string) => TableRequest[],
   ): Promise<{ sheets: string[]; models: Map<string, SheetModel> }> {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.readFile(path);
@@ -101,8 +105,9 @@ export class ExcelReader implements WorkbookReader {
     const models = new Map<string, SheetModel>();
     for (const ws of wb.worksheets) {
       sheets.push(ws.name);
-      const spec = specFor(ws.name);
-      if (spec) models.set(ws.name, modelFrom(ws, path, spec));
+      for (const req of tablesFor(ws.name)) {
+        models.set(req.key, { ...modelFrom(ws, path, req.spec), table: req.table });
+      }
     }
     return { sheets, models };
   }

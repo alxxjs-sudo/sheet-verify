@@ -87,9 +87,14 @@ export function compare(base: SheetModel, next: SheetModel, spec: ResolvedSpec):
     .filter((m) => m.from !== m.to);
 
   // --- layer 2: row population -------------------------------------------
-  const addedRows = next.order.filter((k) => !base.rows.has(k));
-  const removedRows = base.order.filter((k) => !next.rows.has(k));
-  const sharedRows = base.order.filter((k) => next.rows.has(k));
+  // ignoreRows drops rows by key, the row-wise counterpart of ignoreColumns.
+  // A key-value block holds its per-run values in rows, so a timestamp there
+  // cannot be excluded by column.
+  const ignoredRow = (k: string) => spec.ignoreRows.includes(k);
+
+  const addedRows = next.order.filter((k) => !base.rows.has(k) && !ignoredRow(k));
+  const removedRows = base.order.filter((k) => !next.rows.has(k) && !ignoredRow(k));
+  const sharedRows = base.order.filter((k) => next.rows.has(k) && !ignoredRow(k));
 
   // --- layers 3 & 4: values, types, formulas ------------------------------
   const values: ValueDiff[] = [];

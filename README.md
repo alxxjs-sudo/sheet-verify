@@ -113,6 +113,54 @@ SHEETS TO REVIEW
 
 CSV has no worksheets, so it stays on `toMatchSheetBaseline`.
 
+### Several tables on one sheet
+
+Most generated sheets carry a small "output info" block above the data — report
+name, creator, release, a generation timestamp. That is two tables on one sheet,
+and a single `headerRow` cannot describe it: reading from row 1 runs to the
+bottom and swallows the data table below.
+
+Declare each table instead. They are bounded by the next table's `headerRow`, so
+nothing needs re-counting as the data grows:
+
+```ts
+const info = {
+  headerRow: 1,
+  keyColumns: ['Field'],          // a key-value block is keyed by field name
+  ignoreRows: ['Generated At'],   // rewritten every run
+};
+
+await expect(actual).toMatchWorkbookBaseline(baseline, {
+  defaults: { headerRow: 8 },
+  sheets: {
+    Policies: { tables: { Info: info, Detail: { keyColumns: ['PolicyId'] } } },
+    Premiums: { tables: { Info: info, Detail: { keyColumns: ['PolicyId', 'Period'] } } },
+  },
+});
+```
+
+Each table is compared independently and reported under its own name, so a
+release bump in the info block never mixes with a defect in the data:
+
+```
+SHEET "Premiums · Info" — 1 value
+    Release · Value @B5: "4.2.0" → "4.3.0"
+
+SHEET "Premiums · Detail" — 1 value
+    P-1003 / 2026-08 · Gross @C14: 6000 → 6900  (Δ 900)
+```
+
+`ignoreRows` is the row-wise counterpart of `ignoreColumns`. In a key-value
+block the per-run timestamp is a *row*, so no column exclusion can reach it.
+
+A runnable version of exactly this — a five-sheet report with an info block and
+a formula table on every sheet, and a following release that inserts a column,
+adds a sheet, moves rows and plants two real defects — is in [examples/](examples/):
+
+```bash
+npm run build && npm run example
+```
+
 ### Re-blessing a baseline
 
 Schema changes between releases are expected. When a diff is correct, accept it
@@ -175,10 +223,13 @@ Per-sheet options, and the whole spec for a single-sheet comparison:
 | option | default | meaning |
 | --- | --- | --- |
 | `keyColumns` | *required* | column(s) identifying a row |
+| `tables` | – | several tables on one sheet, keyed by name |
 | `sheet` | `0` | worksheet name or index — single-sheet API only |
 | `headerRow` | `1` | 1-based row holding headers |
+| `endRow` | *last row* | 1-based last row; set for you when a sheet declares `tables` |
 | `tolerance` | `0` | number, or per-column record with `*` fallback |
-| `ignoreColumns` | `[]` | excluded from comparison |
+| `ignoreColumns` | `[]` | columns excluded from comparison |
+| `ignoreRows` | `[]` | rows excluded from comparison, by key |
 | `formulaMode` | `'header'` | `'header'` \| `'r1c1'` \| `'a1'` |
 | `compareFormulas` | `true` | compare formula logic at all |
 | `requireCachedValues` | `true` | fail if formula cells have no cached result |

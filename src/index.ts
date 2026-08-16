@@ -1,13 +1,15 @@
 export type {
   Cell, CellKind, CellValue, CsvDialect, CsvOptions, DiffResult, FormulaDiff,
   FormulaMode, Invariant, InvariantFailure, MovedColumn, MovedSheet, ResolvedSpec,
-  Row, SheetModel, SheetOutcome, SheetReader, SheetSpec, SheetStatus, TypeDiff,
-  ValueDiff, WorkbookDiffResult, WorkbookReader, WorkbookSheetSpec, WorkbookSpec,
+  Row, SheetModel, SheetOutcome, SheetReader, SheetSpec, SheetStatus, TableRequest,
+  TableSpec, TypeDiff, ValueDiff, WorkbookDiffResult, WorkbookReader,
+  WorkbookSheetSpec, WorkbookSpec,
 } from './types.js';
 
 export { verifySheet, readSheet, readerFor, registerReader } from './verify.js';
 export {
-  verifyWorkbook, workbookReaderFor, resolveSheetSpec, mergeSheetSpec,
+  verifyWorkbook, workbookReaderFor, resolveSheetSpec, resolveTables, mergeSheetSpec,
+  type ResolvedTable,
 } from './workbook.js';
 export { compare } from './compare.js';
 export {

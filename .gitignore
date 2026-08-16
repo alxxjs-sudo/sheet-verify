@@ -1,5 +1,6 @@
 node_modules/
 dist/
+examples/out/
 tests/.fixtures/
 test-results/
 playwright-report/

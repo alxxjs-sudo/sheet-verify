@@ -33,6 +33,8 @@ export interface SheetModel {
   source: string;
   /** Worksheet name. "" for CSV. */
   sheet: string;
+  /** Table within the sheet, when the sheet holds more than one. */
+  table?: string;
   /** Header names in positional order. */
   headers: string[];
   /** header name -> 1-based column number in the source. */
@@ -65,6 +67,13 @@ export interface SheetSpec {
   /** 1-based row holding the headers. Default 1. */
   headerRow?: number;
   /**
+   * 1-based last row of the table, inclusive. Bounds a table that does not
+   * run to the bottom of the sheet -- an info block above the data, say.
+   * Default 0, meaning read to the last row. Set for you when a sheet
+   * declares several tables.
+   */
+  endRow?: number;
+  /**
    * Column(s) forming the row identity. Multiple columns form a composite key.
    * Rows with a blank key are skipped.
    */
@@ -78,6 +87,13 @@ export interface SheetSpec {
   tolerance?: number | Record<string, number>;
   /** Columns excluded from all comparison (timestamps, run ids, ...). */
   ignoreColumns?: string[];
+  /**
+   * Rows excluded from all comparison, by key. The row-wise counterpart of
+   * `ignoreColumns`, for key-value blocks where a per-run value such as
+   * "Generated At" is a row rather than a column. Composite keys are matched
+   * in their joined form.
+   */
+  ignoreRows?: string[];
   /** Compare formulas at all. Default true. */
   compareFormulas?: boolean;
   /** How formulas are normalised before comparison. Default 'header'. */
@@ -213,15 +229,24 @@ export interface SheetReader {
  * because the whole point is parsing the file *once* for every sheet --
  * calling read() per sheet re-parses the workbook each time.
  */
+export interface TableRequest {
+  /** Table name within the sheet. */
+  table: string;
+  /** Key the resulting model is filed under. */
+  key: string;
+  spec: ResolvedSpec;
+}
+
 export interface WorkbookReader extends SheetReader {
   /**
-   * Returns every sheet name in workbook order, plus models for the sheets
-   * `specFor` accepts. Sheets it returns null for are listed but not built,
-   * so unconfigured tabs cost nothing.
+   * Returns every sheet name in workbook order, plus a model per table that
+   * `tablesFor` asks for, filed under the request's `key`. Sheets it returns
+   * no requests for are listed but not built, so unconfigured tabs cost
+   * nothing beyond being named.
    */
   readWorkbook(
     path: string,
-    specFor: (sheet: string) => ResolvedSpec | null,
+    tablesFor: (sheet: string) => TableRequest[],
   ): Promise<{ sheets: string[]; models: Map<string, SheetModel> }>;
 }
 
@@ -244,7 +269,17 @@ export type ResolvedSpec = Required<
  */
 export type WorkbookSheetSpec = Omit<SheetSpec, 'sheet' | 'keyColumns'> & {
   keyColumns?: string[];
+  /**
+   * Sheets holding more than one table -- an "output info" block above the
+   * data is the common case. Each entry gets its own headers, key and
+   * tolerances. Tables are bounded by the next one's `headerRow`, so no row
+   * counting is needed as the data grows.
+   */
+  tables?: Record<string, TableSpec>;
 };
+
+/** One table within a sheet. Same options as a sheet, minus further nesting. */
+export type TableSpec = Omit<WorkbookSheetSpec, 'tables'>;
 
 export interface WorkbookSpec {
   /**
@@ -278,6 +313,10 @@ export type SheetStatus =
 
 export interface SheetOutcome {
   sheet: string;
+  /** Table within the sheet. Equal to `sheet` when the sheet holds one table. */
+  table: string;
+  /** How the outcome is named in reports: "Policies", or "Policies · Info". */
+  label: string;
   status: SheetStatus;
   /** Set only when status is 'compared'. */
   diff?: DiffResult;

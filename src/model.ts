@@ -21,10 +21,12 @@ export function resolveSpec(spec: SheetSpec): ResolvedSpec {
   return {
     sheet: spec.sheet ?? 0,
     headerRow: spec.headerRow ?? 1,
+    endRow: spec.endRow ?? 0,
     keyColumns: spec.keyColumns,
     keySeparator: spec.keySeparator ?? KEY_SEP,
     tolerance: tol,
     ignoreColumns: spec.ignoreColumns ?? [],
+    ignoreRows: spec.ignoreRows ?? [],
     compareFormulas: spec.compareFormulas ?? true,
     formulaMode: spec.formulaMode ?? 'header',
     requireCachedValues: spec.requireCachedValues ?? true,

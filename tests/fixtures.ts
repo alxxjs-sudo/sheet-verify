@@ -85,6 +85,38 @@ export async function buildWorkbook(path: string, opts: BuildOptions = {}): Prom
 
 export const PERIODS = ['2026-07', '2026-08'];
 
+/**
+ * A sheet carrying two tables: an "output info" block on rows 1-5 and a data
+ * table whose header sits on row 7. The shape almost every real export has,
+ * and the one a single headerRow cannot describe.
+ */
+export async function buildTwoTableSheet(
+  path: string,
+  opts: { generatedAt?: string; release?: string; drift?: number; extraInfo?: boolean } = {},
+): Promise<string> {
+  await mkdir(DIR, { recursive: true });
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Policies');
+
+  ws.addRow(['Field', 'Value']);
+  ws.addRow(['Report Name', 'Monthly Policy Export']);
+  ws.addRow(['Release', opts.release ?? '4.2.0']);
+  ws.addRow(['Generated At', opts.generatedAt ?? '2026-07-15T08:02:11Z']);
+  if (opts.extraInfo) ws.addRow(['Source System', 'POLADMIN']);
+  while (ws.rowCount < 6) ws.addRow([]);
+
+  ws.addRow(['PolicyId', 'Holder', 'Sum Insured', 'Rate', 'Annual Cost']);
+  POLICIES.forEach((p, i) => {
+    const n = 8 + i;
+    const sum = i === 0 && opts.drift ? opts.drift : p.sumInsured;
+    ws.addRow([p.id, p.holder, sum, p.rate, { formula: `C${n}*D${n}`, result: sum * p.rate }]);
+  });
+
+  const full = join(DIR, path);
+  await wb.xlsx.writeFile(full);
+  return full;
+}
+
 export interface MultiSheetOptions {
   /** Sheet names, in workbook order. Default Policies, Premiums, Regions. */
   sheets?: string[];

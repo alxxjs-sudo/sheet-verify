@@ -127,7 +127,9 @@ export function formatWorkbookReport(w: WorkbookDiffResult, opts: ReportOptions 
   const compared = w.sheets.filter((s) => s.status === 'compared');
   const failed = compared.filter((s) => !s.diff!.ok);
   const counts = [
-    `${compared.length} compared`,
+    // Tables, not sheets: a sheet holding an info block and a data table
+    // contributes two.
+    `${compared.length} table${compared.length === 1 ? '' : 's'} compared`,
     w.sheetSchema.added.length ? `${w.sheetSchema.added.length} added` : '',
     w.sheetSchema.removed.length ? `${w.sheetSchema.removed.length} removed` : '',
     w.sheets.filter((s) => s.status === 'skipped').length
@@ -155,7 +157,7 @@ export function formatWorkbookReport(w: WorkbookDiffResult, opts: ReportOptions 
   }
 
   for (const s of failed) {
-    rule(`SHEET "${s.sheet}" — ${summarize(s.diff!)}`);
+    rule(`SHEET "${s.label}" — ${summarize(s.diff!)}`);
     out.push(
       formatReport(s.diff!, opts)
         .split('\n')
@@ -170,9 +172,9 @@ export function formatWorkbookReport(w: WorkbookDiffResult, opts: ReportOptions 
   if (review.length || w.sheetSchema.moved.length) {
     rule('SHEETS TO REVIEW');
     for (const s of review) {
-      if (s.status === 'added') out.push(`  + sheet "${s.sheet}" — new, not compared`);
-      else if (s.status === 'skipped') out.push(`  ? sheet "${s.sheet}" — ${s.reason}`);
-      else out.push(`  ~ sheet "${s.sheet}" — ${summarize(s.diff!)}`);
+      if (s.status === 'added') out.push(`  + sheet "${s.label}" — new, not compared`);
+      else if (s.status === 'skipped') out.push(`  ? table "${s.label}" — ${s.reason}`);
+      else out.push(`  ~ sheet "${s.label}" — ${summarize(s.diff!)}`);
     }
     for (const m of w.sheetSchema.moved) {
       out.push(`  ~ sheet "${m.sheet}" moved ${m.from} → ${m.to}`);

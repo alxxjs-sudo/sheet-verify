@@ -1,9 +1,11 @@
 import { test, expect } from '@playwright/test';
-import { verifyWorkbook, mergeSheetSpec, formatWorkbookReport, summarizeWorkbook } from '../src/index.js';
+import {
+  verifyWorkbook, mergeSheetSpec, resolveTables, formatWorkbookReport, summarizeWorkbook,
+} from '../src/index.js';
 import { ExcelReader } from '../src/reader-excel.js';
 import { resolveSpec } from '../src/model.js';
 import type { SheetOutcome, WorkbookSpec } from '../src/types.js';
-import { buildMultiSheet } from './fixtures.js';
+import { buildMultiSheet, buildTwoTableSheet } from './fixtures.js';
 
 /** The spec a real caller writes: sheets share nothing but the defaults. */
 const SPEC: WorkbookSpec = {
@@ -207,6 +209,144 @@ test.describe('verifyWorkbook', () => {
   });
 });
 
+test.describe('several tables on one sheet', () => {
+  /** Info block on rows 1-5, data table header on row 7. */
+  const TWO_TABLE: WorkbookSpec = {
+    sheets: {
+      Policies: {
+        tables: {
+          Info: { headerRow: 1, keyColumns: ['Field'] },
+          Detail: { headerRow: 7, keyColumns: ['PolicyId'] },
+        },
+      },
+    },
+  };
+
+  test('each table is bounded by the next, so the info block excludes the data below it', async () => {
+    const base = await buildTwoTableSheet('tt-base.xlsx');
+    const next = await buildTwoTableSheet('tt-same.xlsx');
+
+    const d = await verifyWorkbook(base, next, TWO_TABLE);
+
+    expect(d.ok).toBe(true);
+    expect(d.sheets.map((s) => s.label)).toEqual(['Policies · Info', 'Policies · Detail']);
+
+    // The info block has 3 property rows -- not the 3 + blank + 5 policy rows
+    // it would swallow if it ran to the bottom of the sheet.
+    const info = d.sheets.find((s) => s.table === 'Info')!.diff!;
+    expect(info.base.rows).toBe(3);
+    expect(info.schema.compared).toEqual(['Field', 'Value']);
+
+    const detail = d.sheets.find((s) => s.table === 'Detail')!.diff!;
+    expect(detail.base.rows).toBe(5);
+    expect(detail.schema.compared).toContain('Annual Cost');
+  });
+
+  test('a changed info field is reported against the info table alone', async () => {
+    const base = await buildTwoTableSheet('tt-rel-base.xlsx');
+    const next = await buildTwoTableSheet('tt-rel-next.xlsx', { release: '4.3.0' });
+
+    const d = await verifyWorkbook(base, next, TWO_TABLE);
+
+    expect(d.ok).toBe(false);
+    const info = d.sheets.find((s) => s.table === 'Info')!.diff!;
+    expect(info.values).toHaveLength(1);
+    expect(info.values[0]!.key).toBe('Release');
+    expect(d.sheets.find((s) => s.table === 'Detail')!.diff!.ok).toBe(true);
+  });
+
+  test('a per-run timestamp can be ignored on the info table without touching the data table', async () => {
+    const base = await buildTwoTableSheet('tt-ts-base.xlsx');
+    const next = await buildTwoTableSheet('tt-ts-next.xlsx', {
+      generatedAt: '2026-08-16T09:31:44Z',
+    });
+
+    const noisy = await verifyWorkbook(base, next, TWO_TABLE);
+    expect(noisy.ok).toBe(false);
+
+    // The info block is keyed by field name, so the row is dropped by key.
+    const quiet = await verifyWorkbook(base, next, {
+      sheets: {
+        Policies: {
+          tables: {
+            Info: { headerRow: 1, keyColumns: ['Field'], ignoreRows: ['Generated At'] },
+            Detail: { headerRow: 7, keyColumns: ['PolicyId'] },
+          },
+        },
+      },
+    });
+    expect(quiet.ok).toBe(true);
+  });
+
+  test('a defect in the data table is still found with the info block present', async () => {
+    const base = await buildTwoTableSheet('tt-def-base.xlsx');
+    const next = await buildTwoTableSheet('tt-def-next.xlsx', { drift: 999000 });
+
+    const d = await verifyWorkbook(base, next, TWO_TABLE);
+
+    expect(d.ok).toBe(false);
+    const detail = d.sheets.find((s) => s.table === 'Detail')!.diff!;
+    expect(detail.values.filter((v) => v.rootCause)).toHaveLength(1);
+    expect(detail.values[0]!.column).toBe('Sum Insured');
+    expect(d.sheets.find((s) => s.table === 'Info')!.diff!.ok).toBe(true);
+  });
+
+  test('a row added to the info block shifts the data table, and is absorbed', async () => {
+    const base = await buildTwoTableSheet('tt-shift-base.xlsx');
+    const next = await buildTwoTableSheet('tt-shift-next.xlsx', { extraInfo: true });
+
+    const d = await verifyWorkbook(base, next, TWO_TABLE);
+
+    // The info block gained a property; the data table is unchanged and
+    // still sits on row 7, so it compares clean.
+    const info = d.sheets.find((s) => s.table === 'Info')!.diff!;
+    expect(info.rows.added).toEqual(['Source System']);
+    expect(d.sheets.find((s) => s.table === 'Detail')!.diff!.ok).toBe(true);
+  });
+
+  test('tables are ordered by header row regardless of declaration order', () => {
+    const [first, second] = resolveTables(
+      {
+        sheets: {
+          Policies: {
+            tables: {
+              Detail: { headerRow: 7, keyColumns: ['PolicyId'] },
+              Info: { headerRow: 1, keyColumns: ['Field'] },
+            },
+          },
+        },
+      },
+      'Policies',
+    );
+
+    expect(first!.table).toBe('Info');
+    expect(first!.spec!.endRow).toBe(6);
+    expect(second!.table).toBe('Detail');
+    expect(second!.spec!.endRow).toBe(0);
+  });
+
+  test('a table with no key is a coverage gap naming the table, not the sheet', async () => {
+    const base = await buildTwoTableSheet('tt-nokey-base.xlsx');
+    const next = await buildTwoTableSheet('tt-nokey-next.xlsx');
+
+    const d = await verifyWorkbook(base, next, {
+      sheets: {
+        Policies: {
+          tables: {
+            Info: { headerRow: 1 },
+            Detail: { headerRow: 7, keyColumns: ['PolicyId'] },
+          },
+        },
+      },
+    });
+
+    const info = d.sheets.find((s) => s.table === 'Info')!;
+    expect(info.status).toBe('skipped');
+    expect(info.reason).toContain('this table');
+    expect(formatWorkbookReport(d)).toContain('Policies · Info');
+  });
+});
+
 test.describe('spec merging', () => {
   test('tolerance records merge instead of the per-sheet one replacing the default', () => {
     const merged = mergeSheetSpec(
@@ -244,7 +384,7 @@ test.describe('ExcelReader.readWorkbook', () => {
     const seen: string[] = [];
     const { sheets, models } = await new ExcelReader().readWorkbook(path, (name) => {
       seen.push(name);
-      return name === 'Policies' ? spec : null;
+      return name === 'Policies' ? [{ table: 'Policies', key: 'Policies', spec }] : [];
     });
 
     // Every sheet is offered exactly once -- the file is parsed a single time,

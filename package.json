@@ -17,7 +17,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "playwright test",
-    "fidelity": "node dist/fidelity-cli.js"
+    "fidelity": "node dist/fidelity-cli.js",
+    "example": "node --experimental-strip-types examples/generate-report.ts examples/out/baseline.xlsx && node --experimental-strip-types examples/generate-report.ts examples/out/actual.xlsx --next && node --experimental-strip-types examples/compare-report.ts"
   },
   "dependencies": {
     "csv-parse": "^7.0.2",
