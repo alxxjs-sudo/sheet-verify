@@ -1,0 +1,36 @@
+{
+  "name": "sheet-verify",
+  "version": "0.1.0",
+  "description": "Schema-drift-tolerant comparison for generated Excel/CSV outputs, with a Playwright matcher.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./matcher": "./dist/matcher.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "playwright test",
+    "fidelity": "node dist/fidelity-cli.js"
+  },
+  "dependencies": {
+    "csv-parse": "^7.0.2",
+    "exceljs": "^4.4.0",
+    "jszip": "^3.10.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "license": "MIT",
+  "bin": {
+    "sheet-fidelity": "./dist/fidelity-cli.js"
+  }
+}

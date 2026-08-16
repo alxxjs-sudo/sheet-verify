@@ -1,0 +1,232 @@
+import { test, expect } from '@playwright/test';
+import { verifySheet } from '../src/verify.js';
+import { formatReport, summarize } from '../src/report.js';
+import type { SheetSpec } from '../src/types.js';
+import { buildWorkbook, makeSharedFormulas } from './fixtures.js';
+
+const SPEC: SheetSpec = { keyColumns: ['PolicyId'] };
+
+test.describe('the release-drift scenario', () => {
+  test('an inserted column is a schema change, not data churn', async () => {
+    const base = await buildWorkbook('c1-base.xlsx');
+    const next = await buildWorkbook('c1-next.xlsx', {
+      insertPremium: true,
+      valueDrift: { 'P-1003': 249000 },
+      rateDrift: { 'P-1005': 0.12 },
+    });
+
+    const d = await verifySheet(base, next, SPEC);
+
+    // Schema drift is reported once, in its own layer.
+    expect(d.schema.added).toEqual(['Premium']);
+    expect(d.schema.removed).toEqual([]);
+    expect(d.schema.moved.map((m) => m.column)).toEqual(['Rate', 'Annual Cost', 'Commission']);
+
+    // Rows are matched by key, so the population is unchanged.
+    expect(d.rows.added).toEqual([]);
+    expect(d.rows.removed).toEqual([]);
+    expect(d.rows.compared).toBe(5);
+
+    // Exactly the planted formula defect, and nothing from the shift.
+    expect(d.formulas).toHaveLength(1);
+    expect(d.formulas[0]).toMatchObject({
+      key: 'P-1005', column: 'Commission',
+      baseA1: 'F6*0.1', nextA1: 'G6*0.12',
+    });
+
+    // The value drift and its two downstream cells.
+    expect(d.values).toHaveLength(4);
+    const roots = d.values.filter((v) => v.rootCause);
+    expect(roots.map((v) => `${v.key}/${v.column}`).sort())
+      .toEqual(['P-1003/Sum Insured', 'P-1005/Commission']);
+    expect(d.ok).toBe(false);
+  });
+
+  test('root-cause grouping separates the cause from its cascade', async () => {
+    const base = await buildWorkbook('c2-base.xlsx');
+    const next = await buildWorkbook('c2-next.xlsx', { valueDrift: { 'P-1003': 249000 } });
+    const d = await verifySheet(base, next, SPEC);
+
+    // One edit, three changed cells: the source plus two dependent formulas.
+    expect(d.values).toHaveLength(3);
+    const roots = d.values.filter((v) => v.rootCause);
+    expect(roots).toHaveLength(1);
+    expect(roots[0]!.column).toBe('Sum Insured');
+
+    const cascaded = d.values.filter((v) => !v.rootCause).map((v) => v.column).sort();
+    expect(cascaded).toEqual(['Annual Cost', 'Commission']);
+  });
+
+  test('identical files compare clean', async () => {
+    const a = await buildWorkbook('c3-a.xlsx');
+    const b = await buildWorkbook('c3-b.xlsx');
+    const d = await verifySheet(a, b, SPEC);
+    expect(d.ok).toBe(true);
+    expect(summarize(d)).toBe('identical');
+  });
+});
+
+test.describe('formula normalisation modes', () => {
+  test('header mode isolates the real defect where a1 and r1c1 do not', async () => {
+    const base = await buildWorkbook('c4-base.xlsx');
+    const next = await buildWorkbook('c4-next.xlsx', {
+      insertPremium: true, rateDrift: { 'P-1005': 0.12 },
+    });
+
+    const counts: Record<string, number> = {};
+    for (const mode of ['a1', 'r1c1', 'header'] as const) {
+      const d = await verifySheet(base, next, { ...SPEC, formulaMode: mode });
+      counts[mode] = d.formulas.length;
+    }
+
+    // A1 flags every shifted formula; R1C1 still flags Annual Cost because the
+    // new column landed between its two operands; header resolution flags none.
+    expect(counts).toEqual({ a1: 10, r1c1: 6, header: 1 });
+  });
+});
+
+test.describe('shared formulas', () => {
+  test('filled-down formulas are translated, not read as the master address', async () => {
+    // Real Excel stores a filled-down column once and points the rest at it.
+    const base = await buildWorkbook('c5-base.xlsx');
+    await makeSharedFormulas(base, 'F', 2, 6, 0);
+    const next = await buildWorkbook('c5-next.xlsx', { rateDrift: { 'P-1005': 0.12 } });
+    await makeSharedFormulas(next, 'F', 2, 6, 0);
+
+    const d = await verifySheet(base, next, SPEC);
+
+    // If shared formulas were read as their master's address, every row would
+    // normalise to the same string and the Commission defect would vanish.
+    expect(d.formulas).toHaveLength(1);
+    expect(d.formulas[0]!.key).toBe('P-1005');
+    expect(d.formulas[0]!.column).toBe('Commission');
+  });
+
+  test('a shared column matches an unshared one with the same logic', async () => {
+    const shared = await buildWorkbook('c6-shared.xlsx');
+    await makeSharedFormulas(shared, 'F', 2, 6, 0);
+    const plain = await buildWorkbook('c6-plain.xlsx');
+
+    const d = await verifySheet(shared, plain, SPEC);
+    expect(d.formulas).toHaveLength(0);
+    expect(d.ok).toBe(true);
+  });
+});
+
+test.describe('row population', () => {
+  test('added and removed rows are reported by key', async () => {
+    const base = await buildWorkbook('c7-base.xlsx');
+    const next = await buildWorkbook('c7-next.xlsx', {
+      dropRows: ['P-1002'],
+      extraRows: [{ id: 'P-1099', holder: 'Todorov', region: 'Stara Zagora', sumInsured: 45000, rate: 0.02 }],
+    });
+    const d = await verifySheet(base, next, SPEC);
+
+    expect(d.rows.removed).toEqual(['P-1002']);
+    expect(d.rows.added).toEqual(['P-1099']);
+    expect(d.values).toHaveLength(0); // surviving rows are untouched
+  });
+
+  test('reordering rows produces no differences at all', async () => {
+    const base = await buildWorkbook('c8-base.xlsx');
+    const next = await buildWorkbook('c8-next.xlsx', {
+      dropRows: ['P-1001'],
+      extraRows: [{ id: 'P-1001', holder: 'Ivanov', region: 'Sofia', sumInsured: 120000, rate: 0.021 }],
+    });
+    const d = await verifySheet(base, next, SPEC);
+    expect(d.values).toHaveLength(0);
+    expect(d.rows.added).toEqual([]);
+    expect(d.rows.removed).toEqual([]);
+    expect(d.ok).toBe(true);
+  });
+});
+
+test.describe('type and tolerance handling', () => {
+  test('a number written as text is caught even though it renders the same', async () => {
+    const base = await buildWorkbook('c9-base.xlsx');
+    const next = await buildWorkbook('c9-next.xlsx', { textDrift: ['P-1002'] });
+    const d = await verifySheet(base, next, SPEC);
+
+    expect(d.values).toHaveLength(0);       // "85000" equals 85000 once rendered
+    expect(d.types).toHaveLength(1);        // but the type changed
+    expect(d.types[0]).toMatchObject({ key: 'P-1002', column: 'Sum Insured', nextKind: 'string' });
+    expect(d.ok).toBe(false);
+  });
+
+  test('per-column tolerance absorbs float noise without hiding real drift', async () => {
+    const base = await buildWorkbook('c10-base.xlsx');
+    const next = await buildWorkbook('c10-next.xlsx', { valueDrift: { 'P-1003': 240000.004 } });
+
+    const loose = await verifySheet(base, next, { ...SPEC, tolerance: { 'Sum Insured': 0.01, '*': 0.01 } });
+    expect(loose.values).toHaveLength(0);
+
+    const strict = await verifySheet(base, next, SPEC);
+    expect(strict.values.length).toBeGreaterThan(0);
+  });
+
+  test('ignored columns are excluded from comparison', async () => {
+    const base = await buildWorkbook('c11-base.xlsx');
+    const next = await buildWorkbook('c11-next.xlsx', { valueDrift: { 'P-1003': 249000 } });
+    const d = await verifySheet(base, next, {
+      ...SPEC, ignoreColumns: ['Sum Insured', 'Annual Cost', 'Commission'],
+    });
+    expect(d.values).toHaveLength(0);
+    expect(d.ok).toBe(true);
+  });
+});
+
+test.describe('comparison integrity', () => {
+  test('formulas without cached values are refused, not silently passed', async () => {
+    const base = await buildWorkbook('c12-base.xlsx');
+    const next = await buildWorkbook('c12-next.xlsx', { omitCachedResults: true });
+    const d = await verifySheet(base, next, SPEC);
+
+    expect(d.errors.join(' ')).toContain('no cached value');
+    expect(d.ok).toBe(false);
+  });
+
+  test('opting out of the cached-value check leaves formula comparison working', async () => {
+    const base = await buildWorkbook('c13-base.xlsx');
+    const next = await buildWorkbook('c13-next.xlsx', {
+      omitCachedResults: true, rateDrift: { 'P-1005': 0.12 },
+    });
+    const d = await verifySheet(base, next, { ...SPEC, requireCachedValues: false });
+
+    expect(d.errors).toEqual([]);
+    expect(d.formulas).toHaveLength(1);   // logic drift still caught
+  });
+
+  test('a missing key column fails loudly instead of comparing positionally', async () => {
+    const base = await buildWorkbook('c14-base.xlsx');
+    const next = await buildWorkbook('c14-next.xlsx');
+    const d = await verifySheet(base, next, { keyColumns: ['ContractRef'] });
+    expect(d.errors.join(' ')).toContain('key column "ContractRef" not found');
+    expect(d.ok).toBe(false);
+  });
+
+  test('a spec without keyColumns is rejected at the call site', async () => {
+    const base = await buildWorkbook('c15-base.xlsx');
+    await expect(verifySheet(base, base, { keyColumns: [] } as any))
+      .rejects.toThrow(/keyColumns.*required/s);
+  });
+});
+
+test.describe('report', () => {
+  test('leads with the defect and keeps the schema change separate', async () => {
+    const base = await buildWorkbook('c16-base.xlsx');
+    const next = await buildWorkbook('c16-next.xlsx', {
+      insertPremium: true, valueDrift: { 'P-1003': 249000 }, rateDrift: { 'P-1005': 0.12 },
+    });
+    const d = await verifySheet(base, next, SPEC);
+    const text = formatReport(d);
+
+    expect(text).toContain('FORMULA CHANGES (1)');
+    expect(text).toContain('P-1005 · Commission');
+    expect(text).toContain('SCHEMA CHANGES');
+    expect(text).toContain('+ column "Premium"');
+    // The cause is listed; the two cascaded cells are not, by default.
+    expect(text).toContain('P-1003 · Sum Insured');
+    expect(text).not.toContain('CASCADED');
+    expect(text.indexOf('FORMULA CHANGES')).toBeLessThan(text.indexOf('SCHEMA CHANGES'));
+  });
+});

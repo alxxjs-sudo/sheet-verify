@@ -1,0 +1,9 @@
+# Normalise text to LF in the repository, so the package moves between a
+# Windows workstation and a Linux CI runner without whole-file diffs.
+* text=auto
+
+# Committed baselines and templates are zip archives. Line-ending conversion
+# would corrupt them silently, and a "diff" on one is never meaningful.
+*.xlsx binary
+*.xlsm binary
+*.xls  binary
