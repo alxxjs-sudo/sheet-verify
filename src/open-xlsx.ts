@@ -51,9 +51,6 @@ export async function withoutDrawings(buffer: Buffer): Promise<Buffer> {
   return zip.generateAsync({ type: 'nodebuffer' });
 }
 
-/** True when a workbook could only be read with its drawings removed. */
-export const openedWithoutDrawings = new WeakSet<ExcelJS.Workbook>();
-
 export async function openWorkbook(path: string): Promise<ExcelJS.Workbook> {
   const wb = new ExcelJS.Workbook();
   try {
@@ -79,7 +76,6 @@ export async function openWorkbook(path: string): Promise<ExcelJS.Workbook> {
         'feature this reader does not handle -- registerReader() replaces it.',
       );
     }
-    openedWithoutDrawings.add(retry);
     return retry;
   }
 }
