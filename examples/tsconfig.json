@@ -3,7 +3,10 @@
   "compilerOptions": {
     "noEmit": true,
     "rootDir": "..",
-    "types": ["node"]
+    "types": ["node"],
+    // These run under `node --experimental-strip-types`, which resolves .ts
+    // paths literally rather than rewriting them to .js.
+    "allowImportingTsExtensions": true
   },
   "include": ["**/*.ts"]
 }

@@ -52,6 +52,73 @@ test('monthly policy export matches baseline', async () => {
 The full diff is attached to the test result as `sheet-diff.txt` and
 `sheet-diff.json`, so it lands in the Playwright HTML report and in Allure.
 
+## Cases
+
+A case is a folder holding everything about one report type: the golden output
+the new report is judged against, the report from the latest run, and the
+artefacts describing what the comparison did. Everything for one report sits
+together, so it can be reviewed, archived or attached to a ticket as a unit.
+
+```
+cases/monthly-policy-export/
+  golden.xlsx     committed; the contract
+  actual.xlsx     the latest run, copied in
+  diff.txt        the differences, human-readable
+  diff.json       the same, structured
+  cells.csv       every cell compared, and its verdict
+```
+
+```ts
+await expect(actual).toMatchCase('cases/monthly-policy-export', {
+  sheets: {
+    Policies: { keyColumns: ['PolicyId'] },
+    Premiums: { keyColumns: ['PolicyId', 'Period'] },
+  },
+});
+```
+
+The new report is copied into the folder whatever the outcome, so a CI failure
+can be opened next to the golden output it was judged against rather than
+hunting for it in a build artefact. A missing `golden.xlsx` is created from the
+new report and the run passes, the way a snapshot test behaves on first use —
+commit it and review the contents.
+
+Outside Playwright, `runCase()` does the same and returns the result:
+
+```ts
+import { runCase } from 'sheet-verify';
+
+const result = await runCase(actual, 'cases/monthly-policy-export', spec);
+if (!result.ok) console.error(result.summary, result.files.diffText);
+```
+
+### cells.csv
+
+`diff.txt` and `diff.json` record what *differed*. `cells.csv` records what was
+**compared** — one row per cell, matches included, because "we checked this and
+it was fine" is the claim a golden-file suite is actually making and nothing
+else in the output states it.
+
+| column | meaning |
+| --- | --- |
+| `sheet`, `table`, `row_key`, `column` | which cell, in business terms |
+| `status` | `match`, `value-differs`, `formula-differs`, `type-differs`, `within-tolerance`, `ignored-column`, `ignored-row`, `row-added`, `row-removed`, `column-added`, `column-removed` |
+| `root_cause` | `yes` for a cause, `no` for something downstream of one |
+| `baseline_address`, `actual_address` | the cells themselves, which differ when a column moved |
+| `baseline_value`, `actual_value`, `delta` | what changed, and by how much |
+| `tolerance` | what the cell was judged against |
+| `baseline_formula`, `actual_formula` | the original A1 text |
+
+Size is the thing to watch. `cellLedger: 'all'` is the default and writes a row
+per compared cell, so a 50k-row table with 20 columns produces a million rows.
+Narrow it once a case is large enough that nobody reads the audit trail by hand:
+
+```ts
+await expect(actual).toMatchCase(dir, { ...spec, cellLedger: 'differences' });
+```
+
+`'none'` skips the file entirely.
+
 ### Multi-sheet workbooks
 
 Most generated workbooks have several sheets with little in common, so each one
@@ -155,7 +222,8 @@ block the per-run timestamp is a *row*, so no column exclusion can reach it.
 
 A runnable version of exactly this — a five-sheet report with an info block and
 a formula table on every sheet, and a following release that inserts a column,
-adds a sheet, moves rows and plants two real defects — is in [examples/](examples/):
+adds a sheet, moves rows and plants two real defects — is in [examples/](examples/).
+It runs as a case and leaves the folder behind to inspect:
 
 ```bash
 npm run build && npm run example
@@ -208,6 +276,15 @@ Value differences are split into **root causes** and **cascades**: one wrong
 input that feeds two formulas is reported as one cause, not three failures.
 
 ## Spec options
+
+Case-level options for `toMatchCase` / `runCase`, on top of the workbook options:
+
+| option | default | meaning |
+| --- | --- | --- |
+| `cellLedger` | `'all'` | `'all'` \| `'differences'` \| `'none'` |
+| `names` | see above | file names within the case folder |
+| `updateGolden` | `false` | overwrite the golden output and pass |
+| `createMissingGolden` | `true` | create it on first run rather than failing |
 
 Workbook-level options for `toMatchWorkbookBaseline` / `verifyWorkbook`:
 

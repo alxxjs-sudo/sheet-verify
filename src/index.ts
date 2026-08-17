@@ -8,9 +8,15 @@ export type {
 
 export { verifySheet, readSheet, readerFor, registerReader } from './verify.js';
 export {
-  verifyWorkbook, workbookReaderFor, resolveSheetSpec, resolveTables, mergeSheetSpec,
-  type ResolvedTable,
+  verifyWorkbook, runWorkbook, workbookReaderFor, resolveSheetSpec, resolveTables,
+  mergeSheetSpec, type ResolvedTable, type ComparedTable, type WorkbookRun,
 } from './workbook.js';
+export {
+  runCase, type CaseFiles, type CaseOptions, type CaseResult,
+} from './case.js';
+export {
+  ledgerRows, formatLedger, type CellStatus, type LedgerScope,
+} from './ledger.js';
 export { compare } from './compare.js';
 export {
   formatReport, formatWorkbookReport, summarize, summarizeWorkbook,

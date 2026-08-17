@@ -5,3 +5,4 @@ tests/.fixtures/
 test-results/
 playwright-report/
 *.tsbuildinfo
+examples/cases/

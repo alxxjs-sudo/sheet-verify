@@ -1,9 +1,10 @@
-import { copyFile, mkdir, access } from 'node:fs/promises';
+import { copyFile, mkdir, access, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { expect as baseExpect, test } from '@playwright/test';
 import type { DiffResult, SheetSpec, WorkbookDiffResult, WorkbookSpec } from './types.js';
 import { verifySheet } from './verify.js';
 import { verifyWorkbook } from './workbook.js';
+import { runCase, type CaseOptions, type CaseResult } from './case.js';
 import {
   formatReport, formatWorkbookReport, summarize, summarizeWorkbook, type ReportOptions,
 } from './report.js';
@@ -35,7 +36,10 @@ const exists = (p: string) => access(p).then(() => true, () => false);
 
 async function attach(name: string, body: string): Promise<void> {
   try {
-    await test.info().attach(name, { body, contentType: 'text/plain' });
+    // The content type decides how reporters render the attachment, and how
+    // tooling that filters attachments by type finds the machine-readable one.
+    const contentType = name.endsWith('.json') ? 'application/json' : 'text/plain';
+    await test.info().attach(name, { body, contentType });
   } catch {
     // Outside a running test; the message alone carries the detail.
   }
@@ -188,6 +192,61 @@ export const expect = baseExpect.extend({
         `  UPDATE_SHEET_BASELINE=1 npx playwright test\n`,
     };
   },
+
+  /**
+   * Compares a generated report against the golden output in its case folder,
+   * writing the new report and the diff artefacts into that folder so
+   * everything about one report type stays together.
+   */
+  async toMatchCase(actualPath: string, dir: string, options: CaseOptions = {}) {
+    const name = 'toMatchCase';
+
+    if (typeof actualPath !== 'string') {
+      return { name, pass: false, message: () => `${name}: expected a file path, received ${typeof actualPath}` };
+    }
+
+    let result: CaseResult;
+    try {
+      result = await runCase(actualPath, dir, {
+        ...options,
+        updateGolden: options.updateGolden || envUpdate(),
+      });
+    } catch (e) {
+      return { name, pass: false, message: () => `${name}: ${(e as Error).message}` };
+    }
+
+    if (result.blessed) {
+      return { name, pass: true, message: () => `${name}: ${result.summary}` };
+    }
+
+    const report = await readFile(result.files.diffText, 'utf8');
+    await attach('sheet-diff.txt', report);
+    await attach('sheet-diff.json', JSON.stringify(result.diff, null, 2));
+
+    const written =
+      `Case folder: ${result.dir}\n` +
+      `  golden   ${result.files.golden}\n` +
+      `  actual   ${result.files.actual}\n` +
+      `  diff     ${result.files.diffText}\n` +
+      `  json     ${result.files.diffJson}\n` +
+      `  cells    ${result.files.cells}\n`;
+
+    if (result.ok) {
+      return {
+        name, pass: true,
+        message: () => `${name}: ${result.name} matched (${result.summary})\n\n${written}`,
+      };
+    }
+
+    return {
+      name, pass: false,
+      message: () =>
+        `${name}: ${result.name} differs from its golden output — ${result.summary}\n\n` +
+        `${report}\n\n${written}\n` +
+        `If these changes are intended, re-bless the golden output:\n` +
+        `  UPDATE_SHEET_BASELINE=1 npx playwright test\n`,
+    };
+  },
 });
 
 declare global {
@@ -206,6 +265,12 @@ declare global {
         baselinePath: string,
         options: WorkbookMatcherOptions,
       ): Promise<R>;
+      /**
+       * Compares a generated report against the golden output in its case
+       * folder, writing the report and the diff artefacts into that folder.
+       * The receiver is the path to the generated file.
+       */
+      toMatchCase(dir: string, options?: CaseOptions): Promise<R>;
     }
   }
 }
