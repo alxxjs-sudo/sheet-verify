@@ -8,7 +8,8 @@
  *
  * `--next` produces the following release: a column inserted mid-table, a new
  * sheet, rows added and dropped, a fresh timestamp in every info block, and
- * two genuine defects planted underneath the noise.
+ * two genuine defects planted underneath the noise. `examples/cases.ts`
+ * assembles narrower variants from the same parts.
  */
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -17,6 +18,40 @@ import ExcelJS from 'exceljs';
 /** Info block occupies rows 1-6; the data table header sits on row 8. */
 export const INFO_HEADER_ROW = 1;
 export const DATA_HEADER_ROW = 8;
+
+/** Every way the generated report can be varied, composed per case. */
+export interface Variant {
+  release?: string;
+  generatedAt?: string;
+  /** Insert a "Premium" column mid-table, shifting Rate and Annual Cost. */
+  insertPremium?: boolean;
+  /** A gross premium drifts: a value defect. */
+  premiumDefect?: boolean;
+  /** An agent's commission formula gains a stray uplift: a formula defect. */
+  commissionDefect?: boolean;
+  /** One claim closes and another opens: row population churn. */
+  claimsChurn?: boolean;
+  /** A new sheet appears, with no baseline to judge it against. */
+  extraSheet?: boolean;
+  /** Sheets left out entirely, as though the generator stopped producing them. */
+  dropSheets?: string[];
+  /** Write formulas with no cached result, as a broken generator would. */
+  omitCachedResults?: boolean;
+  /** A rate above 1.0 -- wrong, but wrong in *both* files, so only an
+   *  invariant can catch it. */
+  impossibleRate?: boolean;
+}
+
+/** The release under test: every kind of change at once. */
+export const NEXT_RELEASE: Variant = {
+  release: '4.3.0',
+  generatedAt: '2026-08-16T09:31:44Z',
+  insertPremium: true,
+  premiumDefect: true,
+  commissionDefect: true,
+  claimsChurn: true,
+  extraSheet: true,
+};
 
 const colLetter = (n: number): string => {
   let s = '';
@@ -38,16 +73,13 @@ type Row = (string | number)[];
  * comparison with nothing to check -- which `requireCachedValues` rejects.
  */
 interface FormulaDef {
-  /** Formula text for a 1-based row. */
   text: (r: number, h: string[], row: Row) => string;
-  /** The result Excel would compute, written alongside as the cached value. */
   value: (row: Row, h: string[]) => number;
 }
 
 interface SheetData {
   name: string;
   headers: string[];
-  /** One row of literals; formula cells are filled in by `formulas`. */
   rows: Row[];
   formulas?: Record<string, FormulaDef>;
 }
@@ -55,12 +87,17 @@ interface SheetData {
 /** Reads a literal out of a row by header name. */
 const val = (row: Row, h: string[], name: string): number => Number(row[h.indexOf(name)]);
 
-function writeSheet(wb: ExcelJS.Workbook, sheet: SheetData, info: Record<string, string>) {
+function writeSheet(
+  wb: ExcelJS.Workbook,
+  sheet: SheetData,
+  info: Record<string, string>,
+  v: Variant,
+) {
   const ws = wb.addWorksheet(sheet.name);
 
   // --- table 1: output info -------------------------------------------------
   ws.addRow(['Field', 'Value']);
-  for (const [k, v] of Object.entries(info)) ws.addRow([k, v]);
+  for (const [k, value] of Object.entries(info)) ws.addRow([k, value]);
   while (ws.rowCount < DATA_HEADER_ROW - 1) ws.addRow([]);
 
   // --- table 2: the data ----------------------------------------------------
@@ -70,10 +107,10 @@ function writeSheet(wb: ExcelJS.Workbook, sheet: SheetData, info: Record<string,
     const values: any[] = [...row];
     for (const [column, def] of Object.entries(sheet.formulas ?? {})) {
       const idx = sheet.headers.indexOf(column);
-      values[idx] = {
-        formula: def.text(rowNum, sheet.headers, row),
-        result: def.value(row, sheet.headers),
-      };
+      const formula = def.text(rowNum, sheet.headers, row);
+      values[idx] = v.omitCachedResults
+        ? { formula }
+        : { formula, result: def.value(row, sheet.headers) };
     }
     ws.addRow(values);
   });
@@ -100,18 +137,21 @@ const AGENTS = [
 
 const REGIONS = ['Sofia', 'Plovdiv', 'Varna', 'Burgas', 'Ruse'] as const;
 
-export function buildSheets(next: boolean): SheetData[] {
-  // The release under test inserts a "Premium" column mid-table, shifting
-  // Rate and Annual Cost one column right along with their formulas.
-  const policyHeaders = next
+export function buildSheets(v: Variant): SheetData[] {
+  const policyHeaders = v.insertPremium
     ? ['PolicyId', 'Holder', 'Region', 'Sum Insured', 'Premium', 'Rate', 'Annual Cost']
     : ['PolicyId', 'Holder', 'Region', 'Sum Insured', 'Rate', 'Annual Cost'];
+
+  const rateOf = (id: string, rate: number) =>
+    v.impossibleRate && id === 'P-1002' ? 1.4 : rate;
 
   const policies: SheetData = {
     name: 'Policies',
     headers: policyHeaders,
     rows: POLICIES.map(([id, holder, region, sum, rate]) =>
-      next ? [id, holder, region, sum, 'Standard', rate, 0] : [id, holder, region, sum, rate, 0],
+      v.insertPremium
+        ? [id, holder, region, sum, 'Standard', rateOf(id, rate), 0]
+        : [id, holder, region, sum, rateOf(id, rate), 0],
     ),
     formulas: {
       'Annual Cost': {
@@ -126,11 +166,8 @@ export function buildSheets(next: boolean): SheetData[] {
     headers: ['PolicyId', 'Period', 'Gross', 'Tax', 'Net'],
     rows: POLICIES.flatMap(([id, , , sum, rate]) =>
       ['2026-07', '2026-08'].map((period) => {
-        // DEFECT: one gross premium drifts in the new release.
-        const gross =
-          next && id === 'P-1003' && period === '2026-08'
-            ? Math.round(sum * rate * 1.15)
-            : Math.round(sum * rate);
+        const drifted = v.premiumDefect && id === 'P-1003' && period === '2026-08';
+        const gross = Math.round(sum * rate * (drifted ? 1.15 : 1));
         return [id, period, gross, 0, 0];
       }),
     ),
@@ -152,10 +189,9 @@ export function buildSheets(next: boolean): SheetData[] {
     rows: [
       ['C-5001', 'P-1001', 4200, 500, 0],
       ['C-5002', 'P-1003', 18700, 1000, 0],
-      // A claim settled and dropped from the new release, and a new one opened.
-      ...(next ? [] : [['C-5003', 'P-1004', 3100, 250, 0] as (string | number)[]]),
+      ...(v.claimsChurn ? [] : [['C-5003', 'P-1004', 3100, 250, 0] as Row]),
       ['C-5004', 'P-1005', 9450, 750, 0],
-      ...(next ? [['C-5005', 'P-1002', 2600, 300, 0] as (string | number)[]] : []),
+      ...(v.claimsChurn ? [['C-5005', 'P-1002', 2600, 300, 0] as Row] : []),
     ],
     formulas: {
       'Net Claim': {
@@ -170,16 +206,14 @@ export function buildSheets(next: boolean): SheetData[] {
     headers: ['AgentId', 'Agent', 'Region', 'Volume', 'Rate', 'Commission'],
     rows: AGENTS.map(([id, agent, region, volume, rate]) => [id, agent, region, volume, rate, 0]),
     formulas: {
-      // DEFECT: the new release adds a stray uplift to one agent's formula.
-      // The cached value moves with it, so only formula comparison catches it.
       Commission: {
         text: (r, h, row) => {
           const base = `${at(h, 'Volume')}${r}*${at(h, 'Rate')}${r}`;
-          return next && row[0] === 'A-02' ? `${base}*1.1` : base;
+          return v.commissionDefect && row[0] === 'A-02' ? `${base}*1.1` : base;
         },
         value: (row, h) => {
           const base = val(row, h, 'Volume') * val(row, h, 'Rate');
-          return next && row[0] === 'A-02' ? base * 1.1 : base;
+          return v.commissionDefect && row[0] === 'A-02' ? base * 1.1 : base;
         },
       },
     },
@@ -199,8 +233,7 @@ export function buildSheets(next: boolean): SheetData[] {
 
   const sheets = [policies, premiums, claims, commissions, regions];
 
-  if (next) {
-    // A new sheet appears in the release. There is no baseline for it.
+  if (v.extraSheet) {
     sheets.push({
       name: 'Premium Detail',
       headers: ['PolicyId', 'Band', 'Loading', 'Adjusted'],
@@ -214,23 +247,24 @@ export function buildSheets(next: boolean): SheetData[] {
     });
   }
 
-  return sheets;
+  const dropped = new Set(v.dropSheets ?? []);
+  return sheets.filter((s) => !dropped.has(s.name));
 }
 
-export async function generate(path: string, next: boolean): Promise<string> {
+export async function generate(path: string, v: Variant = {}): Promise<string> {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'POLADMIN Export Service';
   wb.created = new Date('2026-08-16T09:00:00Z');
 
-  for (const sheet of buildSheets(next)) {
+  for (const sheet of buildSheets(v)) {
     writeSheet(wb, sheet, {
       'Report Name': 'Monthly Policy Export',
       Creator: 'POLADMIN Export Service',
       'Source System': 'POLADMIN',
-      Release: next ? '4.3.0' : '4.2.0',
+      Release: v.release ?? '4.2.0',
       // Changes on every single run: the classic false-positive source.
-      'Generated At': next ? '2026-08-16T09:31:44Z' : '2026-07-15T08:02:11Z',
-    });
+      'Generated At': v.generatedAt ?? '2026-07-15T08:02:11Z',
+    }, v);
   }
 
   await mkdir(dirname(path), { recursive: true });
@@ -241,5 +275,7 @@ export async function generate(path: string, next: boolean): Promise<string> {
 const target = process.argv[2];
 if (target) {
   const isNext = process.argv.includes('--next');
-  generate(target, isNext).then((p) => console.log(`wrote ${p}${isNext ? ' (next release)' : ''}`));
+  generate(target, isNext ? NEXT_RELEASE : {}).then((p) =>
+    console.log(`wrote ${p}${isNext ? ' (next release)' : ''}`),
+  );
 }

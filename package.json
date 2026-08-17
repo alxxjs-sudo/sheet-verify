@@ -18,7 +18,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "playwright test",
     "fidelity": "node dist/fidelity-cli.js",
-    "example": "node --experimental-strip-types examples/run-case.ts"
+    "example": "node --experimental-strip-types examples/run-cases.ts"
   },
   "dependencies": {
     "csv-parse": "^7.0.2",

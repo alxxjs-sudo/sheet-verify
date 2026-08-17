@@ -200,6 +200,13 @@ export function summarizeWorkbook(w: WorkbookDiffResult): string {
   const skipped = w.sheets.filter((s) => s.status === 'skipped').length;
   if (skipped) bits.push(`${sheets(skipped)} not compared`);
   if (w.sheetSchema.moved.length) bits.push(`${sheets(w.sheetSchema.moved.length)} moved`);
+
+  // Tables that changed without a defect -- an inserted column, say. Without
+  // this a schema-only release reads as "no differences", which is wrong: it
+  // passed, but something did change and the summary is what most people read.
+  const review = w.sheets.filter((s) => s.diff?.reviewOnly).length;
+  if (review) bits.push(`${review} table${review === 1 ? '' : 's'} to review`);
+
   return bits.join(', ') || 'no differences';
 }
 

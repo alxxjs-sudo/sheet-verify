@@ -48,6 +48,9 @@ test.describe('verifyWorkbook', () => {
     expect(policies.values).toHaveLength(0);
     expect(policies.formulas).toHaveLength(0);
 
+    // A schema-only release must not read as "no differences".
+    expect(summarizeWorkbook(d)).toBe('1 table to review');
+
     for (const name of ['Premiums', 'Regions']) {
       const other = d.sheets.find((s) => s.sheet === name)!.diff!;
       expect(other.ok).toBe(true);
@@ -84,6 +87,7 @@ test.describe('verifyWorkbook', () => {
 
     expect(d.ok).toBe(true);
     expect(d.reviewOnly).toBe(true);
+    expect(summarizeWorkbook(d)).toContain('1 sheet added');
     expect(d.sheetSchema.added).toEqual(['Premium Detail']);
     expect(statusOf(d.sheets, 'Premium Detail')).toBe('added');
     expect(d.sheets.filter((s) => s.status === 'compared')).toHaveLength(3);

@@ -7,9 +7,21 @@ import { CsvReader } from './reader-csv.js';
 
 const READERS: SheetReader[] = [new ExcelReader(), new CsvReader()];
 
-/** Registers an additional reader, or overrides a built-in for an extension. */
-export function registerReader(reader: SheetReader): void {
+/**
+ * Registers an additional reader, or overrides a built-in for an extension.
+ * This is the seam that keeps ExcelJS replaceable: a reader implementing
+ * `SheetReader` swaps it out without touching any comparison logic. To take
+ * part in workbook and case comparisons it must implement `readWorkbook` too.
+ *
+ * Returns a function that removes it again, so a test or a scoped override
+ * does not leak into the rest of the process.
+ */
+export function registerReader(reader: SheetReader): () => void {
   READERS.unshift(reader);
+  return () => {
+    const i = READERS.indexOf(reader);
+    if (i >= 0) READERS.splice(i, 1);
+  };
 }
 
 export function readerFor(path: string): SheetReader {
