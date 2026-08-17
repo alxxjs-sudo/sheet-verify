@@ -17,6 +17,7 @@
  * here it is generated so the examples are self-contained.
  */
 import { rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import ExcelJS from 'exceljs';
 // Built output, the way a consumer imports it. Run `npm run build` first.
@@ -54,17 +55,21 @@ for (const c of CASES) {
   console.log(`${pad('', 24)} ${result.summary}`);
 
   // Tally the ledger so the shape of each outcome is visible at a glance.
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(result.files.differences);
-  const ws = wb.getWorksheet("Differences")!;
+  // A case with nothing to report writes no differences file, so its absence
+  // is the answer rather than an error.
   const tally = new Map<string, number>();
-  for (let r = 2; r <= ws.rowCount; r++) {
-    const status = String(ws.getRow(r).getCell(5).value ?? '');
-    tally.set(status, (tally.get(status) ?? 0) + 1);
+  if (existsSync(result.files.differences)) {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(result.files.differences);
+    const ws = wb.getWorksheet('Differences')!;
+    for (let r = 2; r <= ws.rowCount; r++) {
+      const status = String(ws.getRow(r).getCell(5).value ?? '');
+      tally.set(status, (tally.get(status) ?? 0) + 1);
+    }
   }
   const cells = [...tally].sort((a, b) => b[1] - a[1])
     .map(([s, n]) => `${n} ${s}`).join(', ');
-  console.log(`${pad('', 24)} differences.xlsx: ${cells || 'no differing cells'}`);
+  console.log(`${pad('', 24)} differences.xlsx: ${cells || 'not written — nothing differed'}`);
 }
 
 console.log(`\n${CASES.length} cases run, all in ${ROOT}`);

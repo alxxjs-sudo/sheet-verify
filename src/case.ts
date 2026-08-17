@@ -1,4 +1,4 @@
-import { copyFile, mkdir, writeFile, access } from 'node:fs/promises';
+import { copyFile, mkdir, writeFile, access, rm } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import type { WorkbookDiffResult, WorkbookSpec } from './types.js';
@@ -22,6 +22,11 @@ import type { ComparedTable } from './workbook.js';
  *     diff.json          the same, structured
  *     differences.xlsx   one row per differing cell
  *     compared.xlsx      every cell compared, one worksheet per table
+ */
+/**
+ * Where each artefact goes. Every field is a path the run *would* use --
+ * `differences` is not written at all when nothing differed, so check the file
+ * exists before reading it.
  */
 export interface CaseFiles {
   golden: string;
@@ -82,11 +87,16 @@ const DEFAULTS: CaseFiles = {
 
 const exists = (p: string) => access(p).then(() => true, () => false);
 
-/** Streams CSV so a large ledger is never held in memory all at once. */
-async function writeCsv(path: string, lines: Generator<string>): Promise<void> {
+/**
+ * Streams CSV so a large ledger is never held in memory all at once. Returns
+ * the number of data rows, not counting the header.
+ */
+async function writeCsv(path: string, lines: Generator<string>): Promise<number> {
   const out = createWriteStream(path, { encoding: 'utf8' });
+  let written = 0;
   try {
     for (const line of lines) {
+      written++;
       if (!out.write(line + '\n')) {
         await new Promise<void>((resolve) => out.once('drain', () => resolve()));
       }
@@ -96,24 +106,35 @@ async function writeCsv(path: string, lines: Generator<string>): Promise<void> {
       out.end((err?: Error | null) => (err ? reject(err) : resolve()));
     });
   }
+  return Math.max(0, written - 1);
 }
 
 /**
  * The ledger format follows the file name: `differences.xlsx` gets a formatted
- * table, `differences.csv` gets streamed text. Naming the file is a clearer way to
- * choose than a separate option that could contradict it.
+ * table, `differences.csv` gets streamed text. Naming the file is a clearer way
+ * to choose than a separate option that could contradict it.
+ *
+ * A run with nothing to report leaves no file at all, and clears one an earlier
+ * run left behind. An empty differences file reads as a fault rather than as
+ * the answer, and a stale one is worse: it describes a comparison that no
+ * longer holds.
  */
 async function writeLedger(
   path: string,
   tables: ComparedTable[],
   scope: LedgerScope,
-): Promise<void> {
-  if (scope === 'none') return;
-  if (path.toLowerCase().endsWith('.csv')) {
-    await writeCsv(path, ledgerCsvLines(tables, scope));
-    return;
-  }
-  await writeLedgerWorkbook(path, tables, scope);
+): Promise<boolean> {
+  const discard = async () => {
+    await rm(path, { force: true });
+    return false;
+  };
+  if (scope === 'none') return discard();
+
+  const rows = path.toLowerCase().endsWith('.csv')
+    ? await writeCsv(path, ledgerCsvLines(tables, scope))
+    : await writeLedgerWorkbook(path, tables, scope);
+
+  return rows > 0 ? true : discard();
 }
 
 /**

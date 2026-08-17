@@ -223,13 +223,22 @@ export const expect = baseExpect.extend({
     await attach('sheet-diff.txt', report);
     await attach('sheet-diff.json', JSON.stringify(result.diff, null, 2));
 
-    const written =
-      `Case folder: ${result.dir}\n` +
-      `  golden   ${result.files.golden}\n` +
-      `  actual   ${result.files.actual}\n` +
-      `  diff     ${result.files.diffText}\n` +
-      `  json     ${result.files.diffJson}\n` +
-      `  diffs    ${result.files.differences}\n`;
+    // Only what is actually on disk: differences.xlsx is not written when
+    // nothing differed, and pointing at a file that is not there is worse
+    // than not mentioning it.
+    const listing = await Promise.all(
+      ([
+        ['golden', result.files.golden],
+        ['actual', result.files.actual],
+        ['diff', result.files.diffText],
+        ['json', result.files.diffJson],
+        ['diffs', result.files.differences],
+        ['cells', result.files.compared],
+      ] as const).map(async ([label, path]) =>
+        (await exists(path)) ? `  ${label.padEnd(8)} ${path}` : '',
+      ),
+    );
+    const written = `Case folder: ${result.dir}\n${listing.filter(Boolean).join('\n')}\n`;
 
     if (result.ok) {
       return {

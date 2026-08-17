@@ -349,6 +349,10 @@ export async function writeLedgerWorkbook(
   COLUMNS.forEach((c, i) => { ws.getColumn(i + 1).width = c.width; });
 
   const rows = [...ledgerRows(tables, scope)];
+  // Nothing to report: the caller clears any file rather than leaving an empty
+  // one, so do not create it in the first place.
+  if (!rows.length) return 0;
+
   const values = rows.map((r) =>
     COLUMNS.map((c) => {
       const v = r[c.key];
@@ -356,20 +360,14 @@ export async function writeLedgerWorkbook(
     }),
   );
 
-  if (values.length) {
-    ws.addTable({
-      name: "Differences",
-      ref: 'A1',
-      headerRow: true,
-      style: { theme: 'TableStyleLight8', showRowStripes: true },
-      columns: COLUMNS.map((c) => ({ name: c.header, filterButton: true })),
-      rows: values,
-    });
-  } else {
-    // addTable rejects an empty body, so a clean run gets the header alone.
-    ws.addRow(COLUMNS.map((c) => c.header));
-    ws.autoFilter = { from: 'A1', to: { row: 1, column: COLUMNS.length } };
-  }
+  ws.addTable({
+    name: 'Differences',
+    ref: 'A1',
+    headerRow: true,
+    style: { theme: 'TableStyleLight8', showRowStripes: true },
+    columns: COLUMNS.map((c) => ({ name: c.header, filterButton: true })),
+    rows: values,
+  });
 
   styleHeader(ws, COLUMNS.length);
 

@@ -89,7 +89,7 @@ report-comparison/case_001/
   result/
     diff.txt            human-readable summary — start here
     diff.json           the same, structured, for scripts and CI
-    differences.xlsx    one row per differing cell
+    differences.xlsx    one row per differing cell — absent when nothing differed
     compared.xlsx       every cell checked, a worksheet per table
 ```
 
@@ -260,6 +260,16 @@ status colour-coded — so it opens ready to sort and filter.
 Only differing cells get a row. A cell that was **ignored** still earns one when
 it actually differs — that is the evidence the exclusion is doing work — but not
 when it was ignored *and* identical.
+
+**When nothing differs, the file is not written at all**, and one left by an
+earlier run is removed. An empty differences file reads as a fault rather than
+as the answer, and a stale one is worse: it describes a comparison that no
+longer holds.
+
+Its absence is therefore not a pass. Some failures have no cells to point at —
+a removed sheet, a failed invariant, a duplicate key — and those appear in
+`diff.txt` and `diff.json` only. **The verdict is the exit code and `diff.txt`,
+never the presence of this file.**
 
 ### compared.xlsx
 

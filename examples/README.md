@@ -16,7 +16,7 @@ truth rather than stale binaries in the history.
 | case | outcome | what it shows |
 | --- | --- | --- |
 | `monthly-policy-export` | FAIL | the full picture: a column inserted, a sheet added, rows churned, and two real defects underneath |
-| `clean-release` | PASS | nothing changed — `identical`, and an empty `differences.xlsx` |
+| `clean-release` | PASS | nothing changed — `identical`, and no `differences.xlsx` written |
 | `schema-drift-only` | PASS | a `Premium` column inserted and nothing else: reported once, not as churn across every row |
 | `sheet-removed` | FAIL | the `Regions` sheet stops being produced — a defect with **no cells to point at** |
 | `uncached-formulas` | FAIL | the generator writes formulas with no cached result, so value comparison has nothing to check |
@@ -24,10 +24,11 @@ truth rather than stale binaries in the history.
 
 Two of them are worth dwelling on.
 
-**`sheet-removed`** produces an empty `differences.xlsx`. A sheet that is no longer
-produced has no cells to compare, so it appears in `diff.txt` and `diff.json` and
-nowhere else. It is the clearest demonstration of why those two files are not
-redundant with the cell ledgers.
+**`sheet-removed`** fails without writing a `differences.xlsx` at all. A sheet
+that is no longer produced has no cells to compare, so the failure appears in
+`diff.txt` and `diff.json` and nowhere else. It is the clearest demonstration of
+why those two files are not redundant with the cell ledgers — and why a missing
+`differences.xlsx` never means a case passed.
 
 **`invariant-catch`** is the case a golden-file suite cannot catch on its own.
 The rate is wrong in the golden output *and* the new report, so the comparison is

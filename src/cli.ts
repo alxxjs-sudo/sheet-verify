@@ -66,7 +66,7 @@ LAYOUT
       result/          written by this command
         diff.txt            human-readable summary — start here
         diff.json           the same, structured
-        differences.xlsx    one row per differing cell
+        differences.xlsx    one row per differing cell; absent if none differed
         compared.xlsx       every cell checked, a worksheet per table
 
   Sheets, header rows and row keys are detected from the files, so no

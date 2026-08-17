@@ -308,16 +308,19 @@ test.describe('runCase', () => {
   test('the compared workbook can be turned off', async () => {
     const dir = await caseDir('compared-off');
     const golden = await buildMultiSheet('case-off-golden.xlsx');
-    const actual = await buildMultiSheet('case-off-actual.xlsx');
+    const actual = await buildMultiSheet('case-off-actual.xlsx', {
+      premiumDrift: { 'P-1003|2026-08': 9999 },
+    });
 
     await runCase(golden, dir, SPEC);
     const r = await runCase(actual, dir, { ...SPEC, comparedLedger: false });
 
     expect(await exists(r.files.compared)).toBe(false);
+    // The differences file is unaffected -- there are differences to record.
     expect(await exists(r.files.differences)).toBe(true);
   });
 
-  test('a clean run still produces a readable, empty ledger', async () => {
+  test('a clean run writes no differences file at all', async () => {
     const dir = await caseDir('ledger-clean');
     const golden = await buildMultiSheet('case-cln-golden.xlsx');
     const actual = await buildMultiSheet('case-cln-actual.xlsx');
@@ -326,9 +329,59 @@ test.describe('runCase', () => {
     const r = await runCase(actual, dir, SPEC);
 
     expect(r.ok).toBe(true);
-    const ws = await readLedger(r.files.differences);
-    expect(ws.headers[0]).toBe('Sheet');
-    expect(ws.rows).toHaveLength(0);
+    // An empty differences file reads as a fault rather than as the answer.
+    expect(await exists(r.files.differences)).toBe(false);
+    // The record of what *was* checked is still there.
+    expect(await exists(r.files.compared)).toBe(true);
+  });
+
+  test('a differences file left by an earlier run is cleared once the case is clean', async () => {
+    const dir = await caseDir('ledger-stale');
+    const golden = await buildMultiSheet('case-stl-golden.xlsx');
+    const drifted = await buildMultiSheet('case-stl-drifted.xlsx', {
+      premiumDrift: { 'P-1003|2026-08': 9999 },
+    });
+
+    await runCase(golden, dir, SPEC);
+    const bad = await runCase(drifted, dir, SPEC);
+    expect(await exists(bad.files.differences)).toBe(true);
+
+    // The defect is fixed and the report matches again. A stale file here
+    // would describe a comparison that no longer holds.
+    const fixed = await runCase(golden, dir, SPEC);
+    expect(fixed.ok).toBe(true);
+    expect(await exists(fixed.files.differences)).toBe(false);
+  });
+
+  test('a clean run clears a stale CSV ledger too', async () => {
+    const dir = await caseDir('ledger-stale-csv');
+    const golden = await buildMultiSheet('case-stc-golden.xlsx');
+    const drifted = await buildMultiSheet('case-stc-drifted.xlsx', {
+      premiumDrift: { 'P-1003|2026-08': 9999 },
+    });
+    const names = { differences: 'differences.csv' };
+
+    await runCase(golden, dir, { ...SPEC, names });
+    const bad = await runCase(drifted, dir, { ...SPEC, names });
+    expect(await exists(bad.files.differences)).toBe(true);
+
+    const fixed = await runCase(golden, dir, { ...SPEC, names });
+    expect(await exists(fixed.files.differences)).toBe(false);
+  });
+
+  test('cellLedger none writes no differences file either', async () => {
+    const dir = await caseDir('ledger-off');
+    const golden = await buildMultiSheet('case-lof-golden.xlsx');
+    const actual = await buildMultiSheet('case-lof-actual.xlsx', {
+      premiumDrift: { 'P-1003|2026-08': 9999 },
+    });
+
+    await runCase(golden, dir, SPEC);
+    const r = await runCase(actual, dir, { ...SPEC, cellLedger: 'none' });
+
+    expect(r.ok).toBe(false);
+    expect(await exists(r.files.differences)).toBe(false);
+    expect(await exists(r.files.diffText)).toBe(true);
   });
 
   test('naming the ledger .csv streams text instead, for large cases', async () => {
