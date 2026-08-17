@@ -77,4 +77,14 @@ console.log(`cells.xlsx  ${ws.rowCount - 1} differing cell(s) recorded`);
 for (const [s, n] of [...tally].sort((a, b) => b[1] - a[1])) {
   console.log(`            ${String(n).padStart(4)}  ${s}`);
 }
+// compared.xlsx keeps every cell that was checked, split a tab per table.
+const all = new ExcelJS.Workbook();
+await all.xlsx.readFile(result.files.compared);
+const total = all.worksheets.reduce((n, ws) => n + ws.rowCount - 1, 0);
+
+console.log(`\ncompared.xlsx  ${total} cells checked across ${all.worksheets.length} tabs`);
+for (const ws of all.worksheets) {
+  console.log(`            ${String(ws.rowCount - 1).padStart(4)}  ${ws.name}`);
+}
+
 console.log(`\nfiles       ${Object.values(result.files).join('\n            ')}`);

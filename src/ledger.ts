@@ -271,6 +271,43 @@ export function formatLedger(
 const INK = 'FF12151C';
 const MUTED = 'FF6B7280';
 
+/**
+ * The header is painted explicitly rather than left to the table theme.
+ * Themes vary in whether they give the header band a dark fill, and a theme
+ * that does plus dark text of our own leaves the labels invisible.
+ */
+const HEADER_FILL = 'FF1F2937';
+const HEADER_TEXT = 'FFFFFFFF';
+
+function styleHeader(ws: ExcelJS.Worksheet, columns: number): void {
+  const row = ws.getRow(1);
+  row.font = { bold: true, color: { argb: HEADER_TEXT } };
+  row.alignment = { vertical: 'middle' };
+  row.height = 20;
+  for (let c = 1; c <= columns; c++) {
+    row.getCell(c).fill = {
+      type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_FILL },
+    };
+  }
+}
+
+/** Excel's hard limit, less the header and a row to report the truncation. */
+const MAX_DATA_ROWS = 1_048_574;
+
+const INVALID_SHEET_CHARS = /[\\/?*[\]:]/g;
+
+/** Excel rejects some characters and anything past 31 chars, and duplicates. */
+function worksheetName(label: string, used: Set<string>): string {
+  const base = label.replace(INVALID_SHEET_CHARS, '-').trim().slice(0, 31) || 'Sheet';
+  let name = base;
+  for (let i = 2; used.has(name.toLowerCase()); i++) {
+    const suffix = ` (${i})`;
+    name = base.slice(0, 31 - suffix.length) + suffix;
+  }
+  used.add(name.toLowerCase());
+  return name;
+}
+
 /** Status colours: ink on a tint, so the column reads as a legend. */
 const STATUS_STYLE: Record<CellStatus, { font: string; fill: string }> = {
   'value-differs': { font: 'FF9F2F26', fill: 'FFFBE9E7' },
@@ -327,10 +364,7 @@ export async function writeLedgerWorkbook(
     ws.autoFilter = { from: 'A1', to: { row: 1, column: COLUMNS.length } };
   }
 
-  const header = ws.getRow(1);
-  header.font = { bold: true, color: { argb: INK } };
-  header.alignment = { vertical: 'middle' };
-  header.height = 20;
+  styleHeader(ws, COLUMNS.length);
 
   const statusCol = COLUMNS.findIndex((c) => c.key === 'status') + 1;
   const causeCol = COLUMNS.findIndex((c) => c.key === 'rootCause') + 1;
@@ -359,4 +393,69 @@ export async function writeLedgerWorkbook(
 
   await wb.xlsx.writeFile(path);
   return rows.length;
+}
+
+/**
+ * The minimal record of what was compared: which cell on each side, what each
+ * held, and the verdict. No deltas, tolerances or formulas -- those belong in
+ * the differences ledger, which is short enough to carry them.
+ */
+const COMPARED_COLUMNS: ColumnDef[] = [
+  { key: 'rowKey', header: 'Row key', width: 26 },
+  { key: 'column', header: 'Column', width: 22 },
+  { key: 'baselineAddress', header: 'Golden cell', width: 12 },
+  { key: 'actualAddress', header: 'Actual cell', width: 12 },
+  { key: 'baselineValue', header: 'Golden value', width: 22 },
+  { key: 'actualValue', header: 'Actual value', width: 22 },
+  { key: 'status', header: 'Status', width: 17 },
+];
+
+/**
+ * Every cell compared, one worksheet per compared table.
+ *
+ * Split because this is the file that gets large: a workbook of five sheets is
+ * five tabs to scan rather than one sheet of everything, and each tab stays
+ * clear of Excel's row ceiling on its own. Returns the row count per tab.
+ */
+export async function writeComparedWorkbook(
+  path: string,
+  tables: ComparedTable[],
+): Promise<Record<string, number>> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'sheet-verify';
+
+  const used = new Set<string>();
+  const counts: Record<string, number> = {};
+
+  for (const t of tables) {
+    const name = worksheetName(t.label, used);
+    const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
+    COMPARED_COLUMNS.forEach((c, i) => { ws.getColumn(i + 1).width = c.width; });
+    ws.addRow(COMPARED_COLUMNS.map((c) => c.header));
+
+    let n = 0;
+    for (const r of ledgerRows([t], 'all')) {
+      if (n >= MAX_DATA_ROWS) {
+        ws.addRow([`… truncated at ${MAX_DATA_ROWS.toLocaleString('en-US')} rows`]);
+        break;
+      }
+      ws.addRow(
+        COMPARED_COLUMNS.map((c) => {
+          const v = r[c.key];
+          return v === null || v === undefined ? '' : (v as string | number);
+        }),
+      );
+      n++;
+    }
+
+    ws.autoFilter = { from: 'A1', to: { row: 1, column: COMPARED_COLUMNS.length } };
+    styleHeader(ws, COMPARED_COLUMNS.length);
+    counts[name] = n;
+  }
+
+  // A workbook with no worksheets cannot be written.
+  if (!tables.length) wb.addWorksheet('Compared');
+
+  await wb.xlsx.writeFile(path);
+  return counts;
 }

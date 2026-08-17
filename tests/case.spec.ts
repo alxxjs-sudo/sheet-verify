@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import ExcelJS from 'exceljs';
 import { runCase, formatLedger, runWorkbook } from '../src/index.js';
 import type { CaseOptions } from '../src/index.js';
-import { buildMultiSheet, DIR } from './fixtures.js';
+import { buildMultiSheet, buildTwoTableSheet, DIR } from './fixtures.js';
 
 const SPEC: CaseOptions = {
   sheets: {
@@ -174,6 +174,110 @@ test.describe('runCase', () => {
     // The status cell is colour-coded rather than left plain.
     const status = ws.getCell(2, 5);
     expect((status.fill as any)?.fgColor?.argb).toBeTruthy();
+  });
+
+  test('header text contrasts with the header fill rather than vanishing into it', async () => {
+    const dir = await caseDir('ledger-contrast');
+    const golden = await buildMultiSheet('case-con-golden.xlsx');
+    const actual = await buildMultiSheet('case-con-actual.xlsx', {
+      premiumDrift: { 'P-1003|2026-08': 9999 },
+    });
+
+    await runCase(golden, dir, SPEC);
+    const r = await runCase(actual, dir, SPEC);
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(r.files.cells);
+
+    for (const path of [r.files.cells, r.files.compared]) {
+      const book = new ExcelJS.Workbook();
+      await book.xlsx.readFile(path);
+      for (const ws of book.worksheets) {
+        for (let c = 1; c <= 7; c++) {
+          const cell = ws.getCell(1, c);
+          if (!cell.value) continue;
+          const text = (cell.font?.color as any)?.argb;
+          const fill = (cell.fill as any)?.fgColor?.argb;
+          expect(fill).toBeTruthy();
+          expect(text).toBeTruthy();
+          // Light on dark: the two must not be the same shade.
+          expect(String(text).toUpperCase()).not.toBe(String(fill).toUpperCase());
+          expect(String(text).toUpperCase()).toBe('FFFFFFFF');
+        }
+      }
+    }
+  });
+
+  test('compared.xlsx holds every compared cell, one worksheet per table', async () => {
+    const dir = await caseDir('compared');
+    const golden = await buildMultiSheet('case-cmp-golden.xlsx');
+    const actual = await buildMultiSheet('case-cmp-actual.xlsx', {
+      premiumDrift: { 'P-1003|2026-08': 9999 },
+    });
+
+    await runCase(golden, dir, SPEC);
+    const r = await runCase(actual, dir, SPEC);
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(r.files.compared);
+
+    expect(wb.worksheets.map((w) => w.name)).toEqual(['Policies', 'Premiums', 'Regions']);
+
+    const ws = wb.getWorksheet('Premiums')!;
+    expect(ws.getRow(1).values).toEqual([
+      undefined, 'Row key', 'Column', 'Golden cell', 'Actual cell',
+      'Golden value', 'Actual value', 'Status',
+    ]);
+    // 10 rows x 4 columns, matches included -- the point of this file.
+    expect(ws.rowCount - 1).toBe(40);
+    expect(ws.views[0]).toMatchObject({ state: 'frozen', ySplit: 1 });
+
+    const statuses = new Set<string>();
+    for (let r2 = 2; r2 <= ws.rowCount; r2++) {
+      statuses.add(String(ws.getRow(r2).getCell(7).value));
+    }
+    expect(statuses).toContain('match');
+    expect(statuses).toContain('value-differs');
+  });
+
+  test('a sheet holding two tables gets a worksheet each, named for the table', async () => {
+    const dir = await caseDir('compared-tables');
+    const golden = await buildTwoTableSheet('cmp-tt-golden.xlsx');
+    const actual = await buildTwoTableSheet('cmp-tt-actual.xlsx', { release: '4.3.0' });
+
+    const spec: CaseOptions = {
+      sheets: {
+        Policies: {
+          tables: {
+            Info: { headerRow: 1, keyColumns: ['Field'] },
+            Detail: { headerRow: 7, keyColumns: ['PolicyId'] },
+          },
+        },
+      },
+    };
+
+    await runCase(golden, dir, spec);
+    const r = await runCase(actual, dir, spec);
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(r.files.compared);
+    expect(wb.worksheets.map((w) => w.name)).toEqual(['Policies · Info', 'Policies · Detail']);
+
+    // The info block is 3 rows x 2 columns; the data table 5 x 5.
+    expect(wb.getWorksheet('Policies · Info')!.rowCount - 1).toBe(6);
+    expect(wb.getWorksheet('Policies · Detail')!.rowCount - 1).toBe(25);
+  });
+
+  test('the compared workbook can be turned off', async () => {
+    const dir = await caseDir('compared-off');
+    const golden = await buildMultiSheet('case-off-golden.xlsx');
+    const actual = await buildMultiSheet('case-off-actual.xlsx');
+
+    await runCase(golden, dir, SPEC);
+    const r = await runCase(actual, dir, { ...SPEC, comparedLedger: false });
+
+    expect(await exists(r.files.compared)).toBe(false);
+    expect(await exists(r.files.cells)).toBe(true);
   });
 
   test('a clean run still produces a readable, empty ledger', async () => {

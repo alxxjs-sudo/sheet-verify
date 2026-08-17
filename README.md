@@ -65,7 +65,8 @@ cases/monthly-policy-export/
   actual.xlsx     the latest run, copied in
   diff.txt        the differences, human-readable
   diff.json       the same, structured
-  cells.xlsx      a formatted table, one row per differing cell
+  cells.xlsx      one row per differing cell, formatted for working through
+  compared.xlsx   every cell checked, one worksheet per compared table
 ```
 
 ```ts
@@ -113,21 +114,38 @@ Only differing cells get a row. A cell that was **ignored** still earns one when
 it actually differs — that is the evidence the exclusion is doing work — but not
 when it was ignored *and* identical.
 
-To keep the full audit trail, including every cell that matched, set
-`cellLedger: 'all'`. That grows with rows × columns, so a 50k-row table with 20
-columns produces a million rows; name the ledger `.csv` at that size and it
-streams to disk instead of being built in memory:
+The format follows the file name — `.xlsx` gets the formatted table, `.csv` gets
+streamed text. `cellLedger: 'none'` skips the file entirely, and `'all'` folds
+every matching cell into this file too rather than leaving them to
+`compared.xlsx`.
 
-```ts
-await expect(actual).toMatchCase(dir, {
-  ...spec,
-  cellLedger: 'all',
-  names: { cells: 'cells.csv' },
-});
+### compared.xlsx
+
+The full record of what was checked, in a deliberately plain column set — row
+key, column, the cell address on each side, both values, and the verdict.
+"We compared this and it was fine" is the claim a golden-file suite is really
+making, and this is the file that states it.
+
+It is **split one worksheet per compared table**, because this is the file that
+grows with the report:
+
+```
+Policies · Info      10 cells
+Policies · Detail    35 cells
+Premiums · Info      10 cells
+Premiums · Detail    50 cells
+…
 ```
 
-The format follows the file name — `.xlsx` gets the formatted table, `.csv` gets
-streamed text. `cellLedger: 'none'` skips the file entirely.
+A five-sheet report becomes ten tabs to scan rather than one sheet of
+everything, and each tab stays clear of Excel's million-row ceiling on its own.
+A table that would exceed it anyway is truncated with a row saying so.
+
+Turn it off for a case where it is not worth the write time:
+
+```ts
+await expect(actual).toMatchCase(dir, { ...spec, comparedLedger: false });
+```
 
 ### Multi-sheet workbooks
 
@@ -291,7 +309,8 @@ Case-level options for `toMatchCase` / `runCase`, on top of the workbook options
 
 | option | default | meaning |
 | --- | --- | --- |
-| `cellLedger` | `'differences'` | `'differences'` \| `'all'` \| `'none'` |
+| `cellLedger` | `'differences'` | scope of `cells.xlsx`: `'differences'` \| `'all'` \| `'none'` |
+| `comparedLedger` | `true` | write `compared.xlsx` at all |
 | `names` | see above | file names within the case folder |
 | `updateGolden` | `false` | overwrite the golden output and pass |
 | `createMissingGolden` | `true` | create it on first run rather than failing |

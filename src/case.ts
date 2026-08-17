@@ -4,7 +4,9 @@ import { join, basename } from 'node:path';
 import type { WorkbookDiffResult, WorkbookSpec } from './types.js';
 import { runWorkbook } from './workbook.js';
 import { formatWorkbookReport, summarizeWorkbook, type ReportOptions } from './report.js';
-import { ledgerCsvLines, writeLedgerWorkbook, type LedgerScope } from './ledger.js';
+import {
+  ledgerCsvLines, writeLedgerWorkbook, writeComparedWorkbook, type LedgerScope,
+} from './ledger.js';
 import type { ComparedTable } from './workbook.js';
 
 /**
@@ -18,7 +20,8 @@ import type { ComparedTable } from './workbook.js';
  *     actual.xlsx     the latest run, copied in
  *     diff.txt        human-readable differences
  *     diff.json       the same, structured
- *     cells.csv       every cell compared, and its verdict
+ *     cells.xlsx      one row per differing cell, formatted for working through
+ *     compared.xlsx   every cell compared, one worksheet per compared table
  */
 export interface CaseFiles {
   golden: string;
@@ -26,6 +29,7 @@ export interface CaseFiles {
   diffText: string;
   diffJson: string;
   cells: string;
+  compared: string;
 }
 
 export interface CaseOptions extends WorkbookSpec, ReportOptions {
@@ -38,6 +42,13 @@ export interface CaseOptions extends WorkbookSpec, ReportOptions {
    * ledger name so the file streams instead of being built in memory.
    */
   cellLedger?: LedgerScope;
+  /**
+   * Also write `compared.xlsx`: every cell compared, in a minimal column set,
+   * split one worksheet per compared table. This is the file that grows with
+   * the report, so turn it off for a case where it is not worth the time.
+   * Default true.
+   */
+  comparedLedger?: boolean;
   /** Overwrite the golden output with the new report and pass. */
   updateGolden?: boolean;
   /** Create the golden output from the new report when absent. Default true. */
@@ -66,6 +77,7 @@ const DEFAULTS: CaseFiles = {
   diffText: 'diff.txt',
   diffJson: 'diff.json',
   cells: 'cells.xlsx',
+  compared: 'compared.xlsx',
 };
 
 const exists = (p: string) => access(p).then(() => true, () => false);
@@ -123,6 +135,7 @@ export async function runCase(
     diffText: join(dir, names.diffText),
     diffJson: join(dir, names.diffJson),
     cells: join(dir, names.cells),
+    compared: join(dir, names.compared),
   };
   const name = basename(dir);
 
@@ -161,6 +174,9 @@ export async function runCase(
     writeFile(files.diffText, `${name}\n${'='.repeat(name.length)}\n\n${report}\n`, 'utf8'),
     writeFile(files.diffJson, JSON.stringify(diff, null, 2), 'utf8'),
     writeLedger(files.cells, compared, options.cellLedger ?? 'differences'),
+    (options.comparedLedger ?? true)
+      ? writeComparedWorkbook(files.compared, compared)
+      : Promise.resolve(),
   ]);
 
   return {

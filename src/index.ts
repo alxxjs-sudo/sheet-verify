@@ -16,6 +16,7 @@ export {
 } from './case.js';
 export {
   ledgerRows, ledgerCsvLines, formatLedger, writeLedgerWorkbook,
+  writeComparedWorkbook,
   type CellStatus, type LedgerScope, type LedgerRow,
 } from './ledger.js';
 export { compare } from './compare.js';
