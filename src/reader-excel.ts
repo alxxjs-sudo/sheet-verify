@@ -3,6 +3,7 @@ import type {
   CellKind, CellValue, ResolvedSpec, SheetModel, TableRequest, WorkbookReader,
 } from './types.js';
 import { buildModel, type RawCell } from './model.js';
+import { openWorkbook } from './open-xlsx.js';
 
 /** ExcelJS ValueType numeric enum. */
 const VT = {
@@ -81,8 +82,7 @@ export class ExcelReader implements WorkbookReader {
   readonly extensions = ['.xlsx', '.xlsm'];
 
   async read(path: string, spec: ResolvedSpec): Promise<SheetModel> {
-    const wb = new ExcelJS.Workbook();
-    await wb.xlsx.readFile(path);
+    const wb = await openWorkbook(path);
 
     const ws =
       typeof spec.sheet === 'number' ? wb.worksheets[spec.sheet] : wb.getWorksheet(spec.sheet);
@@ -98,8 +98,7 @@ export class ExcelReader implements WorkbookReader {
     path: string,
     tablesFor: (sheet: string) => TableRequest[],
   ): Promise<{ sheets: string[]; models: Map<string, SheetModel> }> {
-    const wb = new ExcelJS.Workbook();
-    await wb.xlsx.readFile(path);
+    const wb = await openWorkbook(path);
 
     const sheets: string[] = [];
     const models = new Map<string, SheetModel>();

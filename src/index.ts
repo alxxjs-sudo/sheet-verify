@@ -28,6 +28,7 @@ export { resolveSpec, buildModel, canonHeader, displayKey, type RawCell } from '
 export { toR1C1, toHeaderRef, colToNum, numToCol } from './a1.js';
 export { ExcelReader } from './reader-excel.js';
 export { CsvReader, dialectDrift, CSV_SHEET } from './reader-csv.js';
+export { openWorkbook, withoutDrawings } from './open-xlsx.js';
 export {
   detectWorkbook, detectSpec, specFromDetection, detectKeyColumns,
   type DetectedSheet, type DetectedTable,
