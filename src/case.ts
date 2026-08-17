@@ -1,6 +1,6 @@
 import { copyFile, mkdir, writeFile, access } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 import type { WorkbookDiffResult, WorkbookSpec } from './types.js';
 import { runWorkbook } from './workbook.js';
 import { formatWorkbookReport, summarizeWorkbook, type ReportOptions } from './report.js';
@@ -169,6 +169,13 @@ export async function runCase(
 
   const { diff, compared } = await runWorkbook(files.golden, files.actual, options);
   const report = formatWorkbookReport(diff, options);
+
+  // A name may point into a subfolder -- the CLI keeps its output under
+  // result/ so it cannot be mistaken for one of the two inputs.
+  const parents = new Set(
+    [files.diffText, files.diffJson, files.cells, files.compared].map((f) => dirname(f)),
+  );
+  await Promise.all([...parents].map((d) => mkdir(d, { recursive: true })));
 
   await Promise.all([
     writeFile(files.diffText, `${name}\n${'='.repeat(name.length)}\n\n${report}\n`, 'utf8'),

@@ -1,0 +1,154 @@
+import { test, expect } from '@playwright/test';
+import { join } from 'node:path';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { detectWorkbook, detectSpec, detectKeyColumns } from '../src/index.js';
+import { buildMultiSheet, buildTwoTableSheet, writeCsv, DIR } from './fixtures.js';
+
+/**
+ * Detection is what makes a comparison possible with no hand-written spec.
+ * It has to find where each table starts and stops, and which columns identify
+ * a row -- and say so plainly when it cannot, rather than inventing a key.
+ */
+
+test.describe('detectKeyColumns', () => {
+  const rows = [
+    ['P-1', 'Ivanov', 'Sofia'],
+    ['P-2', 'Petrov', 'Sofia'],
+    ['P-3', 'Georgiev', 'Varna'],
+  ];
+
+  test('picks the unique column', () => {
+    expect(detectKeyColumns(['PolicyId', 'Holder', 'Region'], rows)).toEqual(['PolicyId']);
+  });
+
+  test('prefers an identifier-shaped name over one that is merely unique', () => {
+    // Holder is unique here too, but only by accident of a small sample.
+    expect(detectKeyColumns(['Holder', 'PolicyId', 'Region'], [
+      ['Ivanov', 'P-1', 'Sofia'],
+      ['Petrov', 'P-2', 'Sofia'],
+    ])).toEqual(['PolicyId']);
+  });
+
+  test('falls back to a composite key when no single column is unique', () => {
+    const key = detectKeyColumns(['PolicyId', 'Period', 'Amount'], [
+      ['P-1', '2026-07', '10'],
+      ['P-1', '2026-08', '11'],
+      ['P-2', '2026-07', '12'],
+    ]);
+    expect(key).toEqual(['PolicyId', 'Period']);
+  });
+
+  test('returns null rather than guessing when nothing identifies a row', () => {
+    expect(detectKeyColumns(['Region', 'Band'], [
+      ['Sofia', 'A'],
+      ['Sofia', 'A'],
+    ])).toBeNull();
+  });
+
+  test('a column with a blank is passed over, however identifier-shaped its name', () => {
+    // Ref looks like the obvious key and is even unique, but a blank means it
+    // cannot identify every row.
+    expect(detectKeyColumns(['Ref', 'Name'], [
+      ['R-1', 'a'],
+      ['', 'b'],
+    ])).toEqual(['Name']);
+  });
+
+  test('a numeric measure that happens to be distinct is not mistaken for a key', () => {
+    expect(detectKeyColumns(['Region', 'Amount'], [
+      ['Sofia', '10'],
+      ['Sofia', '11'],
+    ])).toBeNull();
+  });
+
+  test('a numeric column still counts when its name says it identifies', () => {
+    expect(detectKeyColumns(['Region', 'Invoice No'], [
+      ['Sofia', '10'],
+      ['Sofia', '11'],
+    ])).toEqual(['Invoice No']);
+  });
+});
+
+test.describe('detectWorkbook', () => {
+  test('finds one table per sheet and names it after the sheet', async () => {
+    const path = await buildMultiSheet('det-single.xlsx');
+    const found = await detectWorkbook(path);
+
+    expect(found.map((s) => s.sheet)).toEqual(['Policies', 'Premiums', 'Regions']);
+
+    const policies = found.find((s) => s.sheet === 'Policies')!;
+    expect(policies.tables).toHaveLength(1);
+    expect(policies.tables[0]!.name).toBe('Policies');
+    expect(policies.tables[0]!.headerRow).toBe(1);
+    expect(policies.tables[0]!.keyColumns).toEqual(['PolicyId']);
+
+    const premiums = found.find((s) => s.sheet === 'Premiums')!;
+    expect(premiums.tables[0]!.keyColumns).toEqual(['PolicyId', 'Period']);
+  });
+
+  test('splits a sheet at the blank row, so an info block does not swallow the data', async () => {
+    const path = await buildTwoTableSheet('det-two.xlsx');
+    const [sheet] = await detectWorkbook(path);
+
+    expect(sheet!.tables).toHaveLength(2);
+    const [info, detail] = sheet!.tables;
+
+    expect(info!.headerRow).toBe(1);
+    // Bounded at the block's own last row, not merely above the next table.
+    expect(info!.endRow).toBe(4);
+    expect(info!.keyColumns).toEqual(['Field']);
+    expect(info!.rows).toBe(3);
+
+    expect(detail!.headerRow).toBe(7);
+    expect(detail!.endRow).toBe(0);    // runs to the bottom
+    expect(detail!.keyColumns).toEqual(['PolicyId']);
+    expect(detail!.rows).toBe(5);
+  });
+
+  test('a CSV is one table on one pseudo-sheet', async () => {
+    const path = await writeCsv('det.csv');
+    const found = await detectWorkbook(path);
+
+    expect(found).toHaveLength(1);
+    expect(found[0]!.sheet).toBe('CSV');
+    expect(found[0]!.tables[0]!.keyColumns).toEqual(['PolicyId']);
+  });
+});
+
+test.describe('detectSpec', () => {
+  test('produces a spec the comparison can run unchanged', async () => {
+    const path = await buildTwoTableSheet('det-spec.xlsx');
+    const spec = await detectSpec(path);
+
+    expect(spec.sheets!['Policies']!.tables).toBeDefined();
+    const tables = spec.sheets!['Policies']!.tables!;
+    expect(Object.keys(tables)).toEqual(['Table 1', 'Table 2']);
+    expect(tables['Table 1']!.endRow).toBe(4);
+    expect(tables['Table 2']!.keyColumns).toEqual(['PolicyId']);
+    // The last table carries no endRow, so growth needs no re-detection.
+    expect(tables['Table 2']!.endRow).toBeUndefined();
+  });
+
+  test('a single-table sheet needs no tables block at all', async () => {
+    const path = await buildMultiSheet('det-flat.xlsx');
+    const spec = await detectSpec(path);
+
+    expect(spec.sheets!['Policies']!.tables).toBeUndefined();
+    expect(spec.sheets!['Policies']!.keyColumns).toEqual(['PolicyId']);
+  });
+
+  test('a table whose rows cannot be keyed is left without one, not invented', async () => {
+    const path = join(DIR, 'det-nokey.csv');
+    await mkdir(DIR, { recursive: true });
+    // Every column repeats, so nothing identifies a row.
+    await writeFile(path, 'Region,Band\nSofia,A\nSofia,A\nVarna,B\n', 'utf8');
+
+    const spec = await detectSpec(path);
+    expect(spec.sheets!['CSV']!.keyColumns).toBeUndefined();
+
+    // The comparison then reports it as a visible coverage gap.
+    const outcome = (await import('../src/index.js')).resolveTables(spec, 'CSV')[0]!;
+    expect(outcome.spec).toBeNull();
+    expect(outcome.reason).toContain('keyColumns');
+  });
+});

@@ -22,7 +22,8 @@ were planted:
 **Contents**
 
 - [Install](#install)
-- [Quick start](#quick-start)
+- [Quick start](#quick-start) — two files in a folder, one command
+- [The command](#the-command)
 - [How it works](#how-it-works)
 - [Cases](#cases) — the folder, the artefacts, re-blessing
 - [Describing your report](#describing-your-report) — keys, sheets, tables, tolerance
@@ -54,40 +55,99 @@ test files with no build step. Only the direct-import path needs `npm run build`
 
 ## Quick start
 
-Pick one report, give it a case folder, and name the column that identifies a
-row. Everything else has a working default.
+Put two files in a folder and run one command. There is nothing to configure —
+sheets, header rows and row keys are worked out from the files themselves.
 
-```ts
-import { test } from '@playwright/test';
-import { expect } from 'sheet-verify/matcher';
+**1. Make a folder and drop the two files in it:**
 
-test('monthly policy export', async () => {
-  const actual = await app.generateReport('2026-08');
-
-  await expect(actual).toMatchCase('cases/monthly-policy-export', {
-    sheets: {
-      Policies: { keyColumns: ['PolicyId'] },
-      Premiums: { keyColumns: ['PolicyId', 'Period'] },
-    },
-  });
-});
+```
+report-comparison/
+  case_001/
+    golden.xlsx      the output you trust
+    actual.xlsx      the output under test
 ```
 
-**On the first run** there is no golden output, so the report becomes one and the
-test passes. Open `cases/monthly-policy-export/golden.xlsx`, check it is actually
-correct, and commit it. From then on it is the contract.
-
-**On later runs** the report is compared against it. If they differ, the test
-fails and the case folder holds everything needed to work out why.
-
-To see all of this working before wiring up your own report:
+**2. Run it:**
 
 ```bash
-npm run build && npm run example
+npx sheet-verify
 ```
 
-That runs six cases covering the outcomes you will meet in practice — see
-[examples/](examples/).
+```
+✗ case_001  1 sheet failing, 1 table to review
+    report-comparison/case_001/result/diff.txt
+
+1 case, 1 failing
+```
+
+**3. Read `result/`:**
+
+```
+report-comparison/case_001/
+  golden.xlsx
+  actual.xlsx
+  result/
+    diff.txt         what differed, in reading order
+    diff.json        the same, structured
+    cells.xlsx       one row per differing cell
+    compared.xlsx    every cell checked, a worksheet per table
+```
+
+Exit code is `0` when everything matched and `1` when it did not, so it drops
+straight into CI.
+
+That is the whole workflow. Everything below is for when the defaults are not
+quite right, or when you want this inside a test suite instead.
+
+## The command
+
+```bash
+npx sheet-verify                      # every case in ./report-comparison
+npx sheet-verify path/to/case_007     # just one case
+npx sheet-verify --bless              # accept the differences as the new golden
+npx sheet-verify --print-spec         # show what was detected, as JSON
+npx sheet-verify --ledger all         # record matching cells too
+npx sheet-verify --help
+```
+
+**Case folders** are any subfolders of `report-comparison`. Name them however
+you like — `case_001`, `march-invoices`, `bug-4417`.
+
+**File names** are matched by prefix, so `golden.xlsx` / `actual.xlsx` is the
+convention but not the only option:
+
+| role | any of |
+| --- | --- |
+| the trusted output | `golden` · `baseline` · `expected` · `before` |
+| the output under test | `actual` · `new` · `current` · `after` · `report` |
+
+`.xlsx`, `.xlsm` and `.csv` all work, and both files must be the same kind.
+
+### When the detection gets it wrong
+
+`--print-spec` shows exactly what was worked out from your files:
+
+```bash
+npx sheet-verify --print-spec > report-comparison/case_001/case.json
+```
+
+Edit that file and it is layered over the detection on the next run. Everything
+in it is optional — you only write the parts you want to change. The most common
+one by far is silencing a timestamp that is rewritten on every run:
+
+```json
+{
+  "defaults": { "ignoreRows": ["Generated At"], "ignoreColumns": ["Run Id"] }
+}
+```
+
+Detection **will not invent a row key**. If no column or pair of columns
+identifies a row, that table is reported as *not compared* rather than being
+guessed at, and `case.json` is where you name the key it could not find:
+
+```json
+{ "sheets": { "Summary": { "keyColumns": ["Region", "Band"] } } }
+```
 
 ## How it works
 
@@ -112,25 +172,17 @@ between them. Resolving to header names stops encoding position at all.
 
 ## Cases
 
-A case is a folder holding everything about one report type. Everything for one
-report sits together, so it can be reviewed, archived, or attached to a ticket
-as a unit.
+A case is a folder holding everything about one report: the golden output, the
+report under test, and the artefacts describing what the comparison did. It can
+be reviewed, archived, or attached to a ticket as a unit.
 
-```
-cases/monthly-policy-export/
-  golden.xlsx     committed; the contract
-  actual.xlsx     the latest run, copied in
-  diff.txt        the differences, human-readable
-  diff.json       the same, structured
-  cells.xlsx      one row per differing cell, formatted for working through
-  compared.xlsx   every cell checked, one worksheet per compared table
-```
+The CLI reads the two files straight out of the folder and writes its output to
+`result/`, so nothing it produces can be mistaken for one of the inputs.
 
-The new report is copied into the folder **whatever the outcome**, so a CI
-failure can be opened next to the golden output it was judged against rather
-than hunted down in a build artefact.
-
-Outside Playwright, `runCase()` does the same and returns the result:
+Used from code, the two files need not be in the folder to begin with — pass the
+new report from wherever your app wrote it and it is **copied in**, whatever the
+outcome, so a CI failure can be opened next to the golden output it was judged
+against rather than hunted down in a build artefact:
 
 ```ts
 import { runCase } from 'sheet-verify';
@@ -148,7 +200,8 @@ Schema changes between releases are expected. When a diff is correct, accept it
 explicitly rather than editing the golden file by hand:
 
 ```bash
-UPDATE_SHEET_BASELINE=1 npx playwright test
+npx sheet-verify --bless               # from the CLI
+UPDATE_SHEET_BASELINE=1 npx playwright test   # from a test run
 ```
 
 Golden outputs are committed to git, so the change is reviewed in the pull
@@ -252,10 +305,13 @@ that combination grows with rows × columns, and streaming keeps it off the heap
 
 ## Describing your report
 
+Everything here is detected automatically by the CLI — reach for it when the
+detection needs correcting, or when you are calling the API directly.
+
 ### Keys
 
-`keyColumns` is the only required option. One column, or several forming a
-composite key:
+`keyColumns` is the only required option when calling the API. One column, or
+several forming a composite key:
 
 ```ts
 { keyColumns: ['PolicyId'] }
@@ -424,7 +480,37 @@ exactly this: a rate of 1.4 in *both* files, where the comparison passes and onl
 
 ## Other entry points
 
-Cases are the recommended path. These are narrower and still supported.
+The CLI is the shortest path. These are for wiring the comparison into a test
+suite or a script.
+
+**Inside Playwright**, so a report is checked as part of the suite:
+
+```ts
+import { test } from '@playwright/test';
+import { expect } from 'sheet-verify/matcher';
+
+test('monthly policy export', async () => {
+  const actual = await app.generateReport('2026-08');
+
+  await expect(actual).toMatchCase('report-comparison/case_001', {
+    sheets: { Policies: { keyColumns: ['PolicyId'] } },
+  });
+});
+```
+
+The matcher takes an explicit spec rather than detecting one — a test should
+say what it checks. To detect instead, call `detectSpec()` and pass the result.
+
+**Detection on its own**, if you want the spec without running a comparison:
+
+```ts
+import { detectSpec, detectWorkbook } from 'sheet-verify';
+
+const spec = await detectSpec('golden.xlsx');       // ready to pass to runCase
+const layout = await detectWorkbook('golden.xlsx'); // tables, bounds, candidate keys
+```
+
+The narrower matchers below are still supported.
 
 **One sheet against one baseline file:**
 
@@ -446,12 +532,13 @@ await expect(actual).toMatchWorkbookBaseline('baselines/policies.xlsx', {
 Both attach the diff to the test result as `sheet-diff.txt` and
 `sheet-diff.json`, so it lands in the Playwright HTML report and in Allure.
 
-**CSV** has no worksheets, so it uses the single-sheet API:
+**CSV** works everywhere a workbook does. It is one table, so it presents itself
+as a single sheet named `CSV`:
 
 ```ts
-await expect('out.csv').toMatchSheetBaseline('baselines/out.csv', {
-  keyColumns: ['PolicyId'],
-  csv: { numeric: 'auto', strictDialect: true },
+await expect('out.csv').toMatchCase('report-comparison/case_002', {
+  sheets: { CSV: { keyColumns: ['PolicyId'] } },
+  defaults: { csv: { strictDialect: true } },
 });
 ```
 
@@ -588,7 +675,8 @@ method that parses a file once and returns a model per requested table.
 ```bash
 npm install
 npm run build       # tsc -> dist/
-npm test            # 122 Playwright tests
+npm test            # 135 Playwright tests
 npm run typecheck
 npm run example     # run the six example cases
+npm run compare     # the CLI, from source
 ```

@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { join } from 'node:path';
 import { writeFile, mkdir } from 'node:fs/promises';
 import {
-  registerReader, readerFor, readSheet, verifyWorkbook, buildModel,
+  registerReader, readerFor, readSheet, verifyWorkbook, buildModel, CSV_SHEET,
 } from '../src/index.js';
 import type { ResolvedSpec, SheetModel, SheetReader, TableRequest } from '../src/index.js';
 import { DIR } from './fixtures.js';
@@ -103,10 +103,10 @@ test.describe('workbook readers', () => {
     expect(typeof reader.readWorkbook).toBe('function');
   });
 
-  test('CSV is pointed at the single-sheet API rather than failing obscurely', async () => {
-    await expect(
-      verifyWorkbook('a.csv', 'b.csv', { sheets: {} }),
-    ).rejects.toThrow(/verifySheet/);
+  test('the CSV reader also satisfies the workbook interface, as one pseudo-sheet', () => {
+    const reader = readerFor('x.csv') as { readWorkbook?: unknown };
+    expect(typeof reader.readWorkbook).toBe('function');
+    expect(CSV_SHEET).toBe('CSV');
   });
 
   test('a table request list is honoured verbatim by a conforming reader', async () => {

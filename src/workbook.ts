@@ -1,5 +1,5 @@
 import type {
-  DiffResult, MovedSheet, ResolvedSpec, SheetModel, SheetOutcome, TableRequest,
+  DiffResult, MovedSheet, ResolvedSpec, SheetModel, SheetOutcome, TableRequest, TableSpec,
   WorkbookDiffResult, WorkbookReader, WorkbookSheetSpec, WorkbookSpec,
 } from './types.js';
 import { resolveSpec } from './model.js';
@@ -41,14 +41,36 @@ export function mergeSheetSpec(
 ): WorkbookSheetSpec {
   const d = defaults ?? {};
   const s = sheet ?? {};
+  const tables = mergeTables(d.tables, s.tables);
   return {
     ...d,
     ...s,
+    ...(tables ? { tables } : {}),
     tolerance: { ...asRecord(d.tolerance), ...asRecord(s.tolerance) },
     ignoreColumns: [...(d.ignoreColumns ?? []), ...(s.ignoreColumns ?? [])],
     ignoreRows: [...(d.ignoreRows ?? []), ...(s.ignoreRows ?? [])],
     invariants: [...(d.invariants ?? []), ...(s.invariants ?? [])],
   };
+}
+
+/**
+ * Tables merge per name, for the same reason the fields above do: overriding
+ * one table's tolerance should not delete every other table on the sheet.
+ * Names match case-insensitively, as sheet names do.
+ */
+function mergeTables(
+  a: Record<string, TableSpec> | undefined,
+  b: Record<string, TableSpec> | undefined,
+): Record<string, TableSpec> | undefined {
+  if (!a && !b) return undefined;
+  const out: Record<string, TableSpec> = { ...(a ?? {}) };
+  for (const [name, override] of Object.entries(b ?? {})) {
+    const found = Object.keys(out).find((k) => k.toLowerCase() === name.toLowerCase());
+    const merged = mergeSheetSpec(found ? out[found] : undefined, override);
+    delete (merged as WorkbookSheetSpec).tables;
+    out[found ?? name] = merged;
+  }
+  return out;
 }
 
 /** Looks a sheet's entry up case-insensitively. */

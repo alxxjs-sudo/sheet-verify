@@ -5,7 +5,7 @@ import {
 import { ExcelReader } from '../src/reader-excel.js';
 import { resolveSpec } from '../src/model.js';
 import type { SheetOutcome, WorkbookSpec } from '../src/types.js';
-import { buildMultiSheet, buildTwoTableSheet } from './fixtures.js';
+import { buildMultiSheet, buildTwoTableSheet, writeCsv } from './fixtures.js';
 
 /** The spec a real caller writes: sheets share nothing but the defaults. */
 const SPEC: WorkbookSpec = {
@@ -207,9 +207,19 @@ test.describe('verifyWorkbook', () => {
     expect(d.errors.join()).toContain('Policyz');
   });
 
-  test('CSV is rejected with a pointer to the single-sheet API', async () => {
-    const base = await buildMultiSheet('wb-csv-base.xlsx');
-    await expect(verifyWorkbook('nope.csv', base, SPEC)).rejects.toThrow(/verifySheet/);
+  test('CSV takes part as a one-sheet workbook, so callers need no special case', async () => {
+    const golden = await writeCsv('wb-csv-golden.csv');
+    const actual = await writeCsv('wb-csv-actual.csv', { drift: true });
+
+    const d = await verifyWorkbook(golden, actual, {
+      sheets: { CSV: { keyColumns: ['PolicyId'] } },
+    });
+
+    expect(d.base.sheets).toEqual(['CSV']);
+    expect(d.ok).toBe(false);
+    const diff = d.sheets.find((s) => s.sheet === 'CSV')!.diff!;
+    expect(diff.values).toHaveLength(1);
+    expect(diff.values[0]!.key).toBe('P-1003');
   });
 });
 

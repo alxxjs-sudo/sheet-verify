@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { parse } from 'csv-parse/sync';
-import type { CellValue, CsvDialect, ResolvedSpec, SheetModel, SheetReader } from './types.js';
+import type {
+  CellValue, CsvDialect, ResolvedSpec, SheetModel, TableRequest, WorkbookReader,
+} from './types.js';
 import { buildModel, type RawCell } from './model.js';
 import { numToCol } from './a1.js';
 
@@ -31,8 +33,30 @@ function detectDialect(text: string, forced: string): CsvDialect {
   return { delimiter, bom, lineEnding };
 }
 
-export class CsvReader implements SheetReader {
+/**
+ * The single pseudo-sheet a CSV presents. A constant, not the file name:
+ * `golden.csv` and `actual.csv` must land on the same sheet name to be paired.
+ */
+export const CSV_SHEET = 'CSV';
+
+export class CsvReader implements WorkbookReader {
   readonly extensions = ['.csv', '.tsv', '.txt'];
+
+  /**
+   * A CSV is one table, so it presents itself as a one-sheet workbook. That
+   * lets cases, ledgers and the CLI treat CSV exactly like a workbook instead
+   * of every caller special-casing it.
+   */
+  async readWorkbook(
+    path: string,
+    tablesFor: (sheet: string) => TableRequest[],
+  ): Promise<{ sheets: string[]; models: Map<string, SheetModel> }> {
+    const models = new Map<string, SheetModel>();
+    for (const req of tablesFor(CSV_SHEET)) {
+      models.set(req.key, { ...(await this.read(path, req.spec)), table: req.table });
+    }
+    return { sheets: [CSV_SHEET], models };
+  }
 
   async read(path: string, spec: ResolvedSpec): Promise<SheetModel> {
     const buf = await readFile(path);
