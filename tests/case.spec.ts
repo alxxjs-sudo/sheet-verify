@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFile, rm, access } from 'node:fs/promises';
 import { join } from 'node:path';
+import ExcelJS from 'exceljs';
 import { runCase, formatLedger, runWorkbook } from '../src/index.js';
 import type { CaseOptions } from '../src/index.js';
 import { buildMultiSheet, DIR } from './fixtures.js';
@@ -23,7 +24,7 @@ const caseDir = async (name: string) => {
 const exists = (p: string) => access(p).then(() => true, () => false);
 const rows = (csv: string) => csv.trim().split('\n');
 
-/** Parses the ledger by header name, so adding a column cannot break a test. */
+/** Parses the CSV ledger by header name, so a new column cannot break a test. */
 const parseLedger = (csv: string): Record<string, string>[] => {
   const [header, ...body] = rows(csv);
   const names = header!.split(',');
@@ -31,6 +32,30 @@ const parseLedger = (csv: string): Record<string, string>[] => {
     Object.fromEntries(line.split(',').map((v, i) => [names[i]!, v])),
   );
 };
+
+/** Reads the xlsx ledger back as headers plus keyed rows. */
+async function readLedger(path: string): Promise<{
+  headers: string[];
+  rows: Record<string, string | number | null>[];
+}> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(path);
+  const ws = wb.getWorksheet('Cells')!;
+
+  const headers: string[] = [];
+  ws.getRow(1).eachCell((cell, c) => { headers[c - 1] = String(cell.value ?? ''); });
+
+  const out: Record<string, string | number | null>[] = [];
+  for (let r = 2; r <= ws.rowCount; r++) {
+    const rec: Record<string, string | number | null> = {};
+    headers.forEach((h, i) => {
+      const v = ws.getRow(r).getCell(i + 1).value;
+      rec[h] = v === undefined || v === '' ? null : (v as string | number);
+    });
+    out.push(rec);
+  }
+  return { headers, rows: out };
+}
 
 test.describe('runCase', () => {
   test('creates the golden output on first run and passes', async () => {
@@ -75,8 +100,8 @@ test.describe('runCase', () => {
     expect(values.filter((v: any) => v.rootCause)).toHaveLength(1);
   });
 
-  test('the cell ledger records matches, not only differences', async () => {
-    const dir = await caseDir('ledger-all');
+  test('the ledger holds only differences by default — a matching cell earns no row', async () => {
+    const dir = await caseDir('ledger-default');
     const golden = await buildMultiSheet('case-led-golden.xlsx');
     const actual = await buildMultiSheet('case-led-actual.xlsx', {
       premiumDrift: { 'P-1003|2026-08': 9999 },
@@ -85,47 +110,105 @@ test.describe('runCase', () => {
     await runCase(golden, dir, SPEC);
     const r = await runCase(actual, dir, SPEC);
 
-    const csv = await readFile(r.files.cells, 'utf8');
-    const lines = rows(csv);
+    expect(r.files.cells.endsWith('cells.xlsx')).toBe(true);
+    const ws = await readLedger(r.files.cells);
 
-    expect(lines[0]).toBe(
-      'sheet,table,row_key,column,status,root_cause,baseline_address,actual_address,' +
-      'baseline_value,actual_value,delta,tolerance,baseline_formula,actual_formula',
-    );
-    // Every cell in scope, so matches dominate the file.
-    expect(lines.filter((l) => l.includes(',match,')).length).toBeGreaterThan(50);
+    expect(ws.headers).toEqual([
+      'Sheet', 'Table', 'Row key', 'Column', 'Status', 'Root cause',
+      'Golden cell', 'Actual cell', 'Golden value', 'Actual value',
+      'Delta', 'Tolerance', 'Golden formula', 'Actual formula',
+    ]);
+    expect(ws.rows.some((r) => r['Status'] === 'match')).toBe(false);
 
     // The drifted Amount, and the Tax formula that reads it.
-    const differing = lines.filter((l) => l.includes(',value-differs,'));
+    const differing = ws.rows.filter((r) => r['Status'] === 'value-differs');
     expect(differing).toHaveLength(2);
 
-    const cause = differing.filter((l) => l.includes(',value-differs,yes,'));
+    const cause = differing.filter((r) => r['Root cause'] === 'yes');
     expect(cause).toHaveLength(1);
-    expect(cause[0]).toContain('P-1003');
-    expect(cause[0]).toContain('Amount');
-    expect(cause[0]).toContain('9999');
+    expect(cause[0]!['Row key']).toBe('P-1003 / 2026-08');
+    expect(cause[0]!['Column']).toBe('Amount');
+    expect(cause[0]!['Actual value']).toBe(9999);
 
-    // The consequence is recorded, but marked as not the cause.
-    const consequence = differing.filter((l) => l.includes(',value-differs,no,'));
+    const consequence = differing.filter((r) => r['Root cause'] === 'no');
     expect(consequence).toHaveLength(1);
-    expect(consequence[0]).toContain('Tax');
+    expect(consequence[0]!['Column']).toBe('Tax');
   });
 
-  test('the ledger can be narrowed to differences only', async () => {
-    const dir = await caseDir('ledger-diff');
-    const golden = await buildMultiSheet('case-nar-golden.xlsx');
-    const actual = await buildMultiSheet('case-nar-actual.xlsx', {
+  test('numbers are written as numbers, so the sheet sorts and filters correctly', async () => {
+    const dir = await caseDir('ledger-types');
+    const golden = await buildMultiSheet('case-typ-golden.xlsx');
+    const actual = await buildMultiSheet('case-typ-actual.xlsx', {
       premiumDrift: { 'P-1003|2026-08': 9999 },
     });
 
     await runCase(golden, dir, SPEC);
-    const r = await runCase(actual, dir, { ...SPEC, cellLedger: 'differences' });
+    const r = await runCase(actual, dir, SPEC);
+
+    const ws = await readLedger(r.files.cells);
+    const cause = ws.rows.find((r) => r['Root cause'] === 'yes')!;
+
+    expect(typeof cause['Golden value']).toBe('number');
+    expect(typeof cause['Actual value']).toBe('number');
+    expect(cause['Delta']).toBe(3999);
+  });
+
+  test('the ledger arrives as a real Excel table, with the header frozen', async () => {
+    const dir = await caseDir('ledger-style');
+    const golden = await buildMultiSheet('case-sty-golden.xlsx');
+    const actual = await buildMultiSheet('case-sty-actual.xlsx', {
+      premiumDrift: { 'P-1003|2026-08': 9999 },
+    });
+
+    await runCase(golden, dir, SPEC);
+    const r = await runCase(actual, dir, SPEC);
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(r.files.cells);
+    const ws = wb.getWorksheet('Cells')!;
+
+    expect(ws.views[0]).toMatchObject({ state: 'frozen', ySplit: 1 });
+    expect(ws.getRow(1).font?.bold).toBe(true);
+    // Every column is widened past the default.
+    for (let c = 1; c <= 14; c++) expect(ws.getColumn(c).width).toBeGreaterThan(9);
+    // The status cell is colour-coded rather than left plain.
+    const status = ws.getCell(2, 5);
+    expect((status.fill as any)?.fgColor?.argb).toBeTruthy();
+  });
+
+  test('a clean run still produces a readable, empty ledger', async () => {
+    const dir = await caseDir('ledger-clean');
+    const golden = await buildMultiSheet('case-cln-golden.xlsx');
+    const actual = await buildMultiSheet('case-cln-actual.xlsx');
+
+    await runCase(golden, dir, SPEC);
+    const r = await runCase(actual, dir, SPEC);
+
+    expect(r.ok).toBe(true);
+    const ws = await readLedger(r.files.cells);
+    expect(ws.headers[0]).toBe('Sheet');
+    expect(ws.rows).toHaveLength(0);
+  });
+
+  test('naming the ledger .csv streams text instead, for large cases', async () => {
+    const dir = await caseDir('ledger-csv');
+    const golden = await buildMultiSheet('case-csv-golden.xlsx');
+    const actual = await buildMultiSheet('case-csv-actual.xlsx', {
+      premiumDrift: { 'P-1003|2026-08': 9999 },
+    });
+
+    await runCase(golden, dir, SPEC);
+    const r = await runCase(actual, dir, {
+      ...SPEC, names: { cells: 'cells.csv' }, cellLedger: 'all',
+    });
 
     const lines = rows(await readFile(r.files.cells, 'utf8'));
-    expect(lines.some((l) => l.includes(',match,'))).toBe(false);
-    // Header, the drifted cell, and the Tax formula downstream of it.
-    expect(lines).toHaveLength(3);
-    expect(lines.filter((l) => l.includes(',value-differs,'))).toHaveLength(2);
+    expect(lines[0]).toBe(
+      'Sheet,Table,Row key,Column,Status,Root cause,Golden cell,Actual cell,' +
+      'Golden value,Actual value,Delta,Tolerance,Golden formula,Actual formula',
+    );
+    // 'all' keeps the matches, which is what makes the CSV path worth having.
+    expect(lines.filter((l) => l.includes(',match,')).length).toBeGreaterThan(50);
   });
 
   test('re-blessing replaces the golden output and the next run is clean', async () => {
@@ -206,12 +289,12 @@ test.describe('cell ledger', () => {
       },
     });
     const within = parseLedger(formatLedger(compared, 'differences'))
-      .filter((r) => r.status === 'within-tolerance');
+      .filter((r) => r['Status'] === 'within-tolerance');
 
     expect(within).toHaveLength(1);
-    expect(within[0]!.tolerance).toBe('1');
-    expect(within[0]!.delta).toBe('0.5');
-    expect(within[0]!.column).toBe('Amount');
+    expect(within[0]!['Tolerance']).toBe('1');
+    expect(within[0]!['Delta']).toBe('0.5');
+    expect(within[0]!['Column']).toBe('Amount');
   });
 
   test('none writes nothing at all', async () => {

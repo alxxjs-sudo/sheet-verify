@@ -4,7 +4,8 @@ import { join, basename } from 'node:path';
 import type { WorkbookDiffResult, WorkbookSpec } from './types.js';
 import { runWorkbook } from './workbook.js';
 import { formatWorkbookReport, summarizeWorkbook, type ReportOptions } from './report.js';
-import { ledgerRows, type LedgerScope } from './ledger.js';
+import { ledgerCsvLines, writeLedgerWorkbook, type LedgerScope } from './ledger.js';
+import type { ComparedTable } from './workbook.js';
 
 /**
  * A case is a folder. It holds the golden output the new report is judged
@@ -31,9 +32,10 @@ export interface CaseOptions extends WorkbookSpec, ReportOptions {
   /** File names within the case folder. Defaults shown in `CaseFiles`. */
   names?: Partial<CaseFiles>;
   /**
-   * How much of the cell-by-cell ledger to write. 'all' records every cell
-   * compared including matches, which is the full audit trail but grows with
-   * rows x columns. Default 'all'.
+   * How much of the cell-by-cell ledger to write. Default 'differences' --
+   * a cell that matched needs no row. 'all' adds every matching cell too, as
+   * a full audit trail, but grows with rows x columns; pair it with a `.csv`
+   * ledger name so the file streams instead of being built in memory.
    */
   cellLedger?: LedgerScope;
   /** Overwrite the golden output with the new report and pass. */
@@ -63,20 +65,17 @@ const DEFAULTS: CaseFiles = {
   actual: 'actual.xlsx',
   diffText: 'diff.txt',
   diffJson: 'diff.json',
-  cells: 'cells.csv',
+  cells: 'cells.xlsx',
 };
 
 const exists = (p: string) => access(p).then(() => true, () => false);
 
-/** Streams the ledger so a large case does not build the whole CSV in memory. */
-async function writeLedger(
-  path: string,
-  rows: Generator<string>,
-): Promise<void> {
+/** Streams CSV so a large ledger is never held in memory all at once. */
+async function writeCsv(path: string, lines: Generator<string>): Promise<void> {
   const out = createWriteStream(path, { encoding: 'utf8' });
   try {
-    for (const row of rows) {
-      if (!out.write(row + '\n')) {
+    for (const line of lines) {
+      if (!out.write(line + '\n')) {
         await new Promise<void>((resolve) => out.once('drain', () => resolve()));
       }
     }
@@ -85,6 +84,24 @@ async function writeLedger(
       out.end((err?: Error | null) => (err ? reject(err) : resolve()));
     });
   }
+}
+
+/**
+ * The ledger format follows the file name: `cells.xlsx` gets a formatted
+ * table, `cells.csv` gets streamed text. Naming the file is a clearer way to
+ * choose than a separate option that could contradict it.
+ */
+async function writeLedger(
+  path: string,
+  tables: ComparedTable[],
+  scope: LedgerScope,
+): Promise<void> {
+  if (scope === 'none') return;
+  if (path.toLowerCase().endsWith('.csv')) {
+    await writeCsv(path, ledgerCsvLines(tables, scope));
+    return;
+  }
+  await writeLedgerWorkbook(path, tables, scope);
 }
 
 /**
@@ -143,7 +160,7 @@ export async function runCase(
   await Promise.all([
     writeFile(files.diffText, `${name}\n${'='.repeat(name.length)}\n\n${report}\n`, 'utf8'),
     writeFile(files.diffJson, JSON.stringify(diff, null, 2), 'utf8'),
-    writeLedger(files.cells, ledgerRows(compared, options.cellLedger ?? 'all')),
+    writeLedger(files.cells, compared, options.cellLedger ?? 'differences'),
   ]);
 
   return {

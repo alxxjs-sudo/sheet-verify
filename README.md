@@ -65,7 +65,7 @@ cases/monthly-policy-export/
   actual.xlsx     the latest run, copied in
   diff.txt        the differences, human-readable
   diff.json       the same, structured
-  cells.csv       every cell compared, and its verdict
+  cells.xlsx      a formatted table, one row per differing cell
 ```
 
 ```ts
@@ -92,32 +92,42 @@ const result = await runCase(actual, 'cases/monthly-policy-export', spec);
 if (!result.ok) console.error(result.summary, result.files.diffText);
 ```
 
-### cells.csv
+### cells.xlsx
 
-`diff.txt` and `diff.json` record what *differed*. `cells.csv` records what was
-**compared** — one row per cell, matches included, because "we checked this and
-it was fine" is the claim a golden-file suite is actually making and nothing
-else in the output states it.
+`diff.txt` reads top-down; `cells.xlsx` is for working through cell by cell. It
+arrives as a real Excel table — filter buttons, banded rows, header frozen,
+columns already wide enough to read, and the status column colour-coded — so it
+opens ready to sort and filter rather than needing to be set up first.
 
 | column | meaning |
 | --- | --- |
-| `sheet`, `table`, `row_key`, `column` | which cell, in business terms |
-| `status` | `match`, `value-differs`, `formula-differs`, `type-differs`, `within-tolerance`, `ignored-column`, `ignored-row`, `row-added`, `row-removed`, `column-added`, `column-removed` |
-| `root_cause` | `yes` for a cause, `no` for something downstream of one |
-| `baseline_address`, `actual_address` | the cells themselves, which differ when a column moved |
-| `baseline_value`, `actual_value`, `delta` | what changed, and by how much |
-| `tolerance` | what the cell was judged against |
-| `baseline_formula`, `actual_formula` | the original A1 text |
+| Sheet, Table, Row key, Column | which cell, in business terms |
+| Status | `value-differs`, `formula-differs`, `type-differs`, `within-tolerance`, `ignored-column`, `ignored-row`, `row-added`, `row-removed`, `column-added`, `column-removed`, `match` |
+| Root cause | `yes` for a cause, `no` for something downstream of one |
+| Golden cell, Actual cell | the addresses, which differ when a column moved |
+| Golden value, Actual value, Delta | what changed, and by how much — written as numbers, so sorting works |
+| Tolerance | what the cell was judged against |
+| Golden formula, Actual formula | the original A1 text |
 
-Size is the thing to watch. `cellLedger: 'all'` is the default and writes a row
-per compared cell, so a 50k-row table with 20 columns produces a million rows.
-Narrow it once a case is large enough that nobody reads the audit trail by hand:
+Only differing cells get a row. A cell that was **ignored** still earns one when
+it actually differs — that is the evidence the exclusion is doing work — but not
+when it was ignored *and* identical.
+
+To keep the full audit trail, including every cell that matched, set
+`cellLedger: 'all'`. That grows with rows × columns, so a 50k-row table with 20
+columns produces a million rows; name the ledger `.csv` at that size and it
+streams to disk instead of being built in memory:
 
 ```ts
-await expect(actual).toMatchCase(dir, { ...spec, cellLedger: 'differences' });
+await expect(actual).toMatchCase(dir, {
+  ...spec,
+  cellLedger: 'all',
+  names: { cells: 'cells.csv' },
+});
 ```
 
-`'none'` skips the file entirely.
+The format follows the file name — `.xlsx` gets the formatted table, `.csv` gets
+streamed text. `cellLedger: 'none'` skips the file entirely.
 
 ### Multi-sheet workbooks
 
@@ -281,7 +291,7 @@ Case-level options for `toMatchCase` / `runCase`, on top of the workbook options
 
 | option | default | meaning |
 | --- | --- | --- |
-| `cellLedger` | `'all'` | `'all'` \| `'differences'` \| `'none'` |
+| `cellLedger` | `'differences'` | `'differences'` \| `'all'` \| `'none'` |
 | `names` | see above | file names within the case folder |
 | `updateGolden` | `false` | overwrite the golden output and pass |
 | `createMissingGolden` | `true` | create it on first run rather than failing |

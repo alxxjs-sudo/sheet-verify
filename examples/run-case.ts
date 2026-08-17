@@ -10,12 +10,13 @@
  *     actual.xlsx   the new report, copied in
  *     diff.txt      the differences, human-readable
  *     diff.json     the same, structured
- *     cells.csv     every cell compared, and its verdict
+ *     cells.xlsx    a formatted table, one row per differing cell
  *
  * In real use `golden.xlsx` is committed and reviewed in the pull request;
  * here it is generated so the example is self-contained.
  */
 import { rm, readFile } from 'node:fs/promises';
+import ExcelJS from 'exceljs';
 import { join } from 'node:path';
 // Built output, the way a consumer imports it. Run `npm run build` first.
 import { runCase, invariants as inv } from '../dist/index.js';
@@ -42,8 +43,10 @@ const spec = {
   },
 };
 
-// Start from an empty case folder so the example is repeatable.
-await rm(CASE_DIR, { recursive: true, force: true });
+// Start from an empty case folder so the example is repeatable. A file open
+// in Excel or an editor cannot be unlinked on Windows, which is not worth
+// failing the run over -- everything written below overwrites in place.
+await rm(CASE_DIR, { recursive: true, force: true }).catch(() => {});
 
 // First run: no golden output yet, so the release under test establishes it.
 const golden = await generate(join('examples', 'out', 'release-4.2.0.xlsx'), false);
@@ -58,14 +61,20 @@ console.log(`case       ${result.name}`);
 console.log(`verdict    ${result.ok ? 'PASS' : 'FAIL'} — ${result.summary}\n`);
 console.log(await readFile(result.files.diffText, 'utf8'));
 
-const cells = (await readFile(result.files.cells, 'utf8')).trim().split('\n');
-const [header, ...body] = cells;
-const status = (line: string) => line.split(',')[4];
-const tally = new Map<string, number>();
-for (const line of body) tally.set(status(line)!, (tally.get(status(line)!) ?? 0) + 1);
+// The ledger is a formatted worksheet, so read it back the same way any
+// consumer would rather than parsing it as text.
+const wb = new ExcelJS.Workbook();
+await wb.xlsx.readFile(result.files.cells);
+const ws = wb.getWorksheet('Cells')!;
 
-console.log(`cells.csv  ${body.length} cells recorded`);
-for (const [s, n] of [...tally].sort((a, b) => b[1] - a[1])) {
-  console.log(`           ${String(n).padStart(5)}  ${s}`);
+const tally = new Map<string, number>();
+for (let r = 2; r <= ws.rowCount; r++) {
+  const status = String(ws.getRow(r).getCell(5).value ?? '');
+  tally.set(status, (tally.get(status) ?? 0) + 1);
 }
-console.log(`\nfiles      ${Object.values(result.files).join('\n           ')}`);
+
+console.log(`cells.xlsx  ${ws.rowCount - 1} differing cell(s) recorded`);
+for (const [s, n] of [...tally].sort((a, b) => b[1] - a[1])) {
+  console.log(`            ${String(n).padStart(4)}  ${s}`);
+}
+console.log(`\nfiles       ${Object.values(result.files).join('\n            ')}`);
