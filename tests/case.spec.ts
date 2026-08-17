@@ -268,6 +268,43 @@ test.describe('runCase', () => {
     expect(wb.getWorksheet('Policies · Detail')!.rowCount - 1).toBe(25);
   });
 
+  test('non-matching cells are highlighted in compared.xlsx, matches left plain', async () => {
+    const dir = await caseDir('compared-highlight');
+    const golden = await buildMultiSheet('case-hl-golden.xlsx');
+    const actual = await buildMultiSheet('case-hl-actual.xlsx', {
+      premiumDrift: { 'P-1003|2026-08': 9999 },
+    });
+
+    await runCase(golden, dir, SPEC);
+    const r = await runCase(actual, dir, SPEC);
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(r.files.compared);
+    const ws = wb.getWorksheet('Premiums')!;
+
+    let painted = 0;
+    let plain = 0;
+    for (let n = 2; n <= ws.rowCount; n++) {
+      const row = ws.getRow(n);
+      const status = String(row.getCell(7).value);
+      const fill = (row.getCell(7).fill as any)?.fgColor?.argb;
+
+      if (status === 'match') {
+        expect(fill).toBeFalsy();
+        plain++;
+      } else {
+        expect(fill).toBeTruthy();
+        // The values that differ are emphasised alongside the verdict.
+        expect(row.getCell(5).font?.bold).toBe(true);
+        expect(row.getCell(6).font?.bold).toBe(true);
+        painted++;
+      }
+    }
+
+    expect(painted).toBe(2);          // the drifted Amount and its Tax cascade
+    expect(plain).toBe(38);
+  });
+
   test('the compared workbook can be turned off', async () => {
     const dir = await caseDir('compared-off');
     const golden = await buildMultiSheet('case-off-golden.xlsx');

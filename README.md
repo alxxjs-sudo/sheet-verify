@@ -141,6 +141,13 @@ A five-sheet report becomes ten tabs to scan rather than one sheet of
 everything, and each tab stays clear of Excel's million-row ceiling on its own.
 A table that would exceed it anyway is truncated with a row saying so.
 
+Anything that is not a plain match is highlighted — the verdict filled and the
+two values bolded, in the same colours `cells.xlsx` uses, so the palette reads
+the same in both files. Matches are left unpainted: in a tab that is mostly
+matches, colour is only useful if it marks the exceptions. Grey marks a cell
+that was *excluded* rather than wrong, so `ignoreRows` and `ignoreColumns` show
+their effect here.
+
 Turn it off for a case where it is not worth the write time:
 
 ```ts

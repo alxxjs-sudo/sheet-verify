@@ -308,6 +308,13 @@ function worksheetName(label: string, used: Set<string>): string {
   return name;
 }
 
+/** Paints one status cell. Shared so both ledgers read as the same legend. */
+function paintStatus(cell: ExcelJS.Cell, status: CellStatus): void {
+  const style = STATUS_STYLE[status];
+  cell.font = { color: { argb: style.font }, bold: true };
+  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: style.fill } };
+}
+
 /** Status colours: ink on a tint, so the column reads as a legend. */
 const STATUS_STYLE: Record<CellStatus, { font: string; fill: string }> = {
   'value-differs': { font: 'FF9F2F26', fill: 'FFFBE9E7' },
@@ -374,10 +381,7 @@ export async function writeLedgerWorkbook(
 
   rows.forEach((r, i) => {
     const rowNum = i + 2;
-    const style = STATUS_STYLE[r.status];
-    const cell = ws.getCell(rowNum, statusCol);
-    cell.font = { color: { argb: style.font }, bold: true };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: style.fill } };
+    paintStatus(ws.getCell(rowNum, statusCol), r.status);
 
     if (r.rootCause) {
       ws.getCell(rowNum, causeCol).font = {
@@ -433,18 +437,32 @@ export async function writeComparedWorkbook(
     COMPARED_COLUMNS.forEach((c, i) => { ws.getColumn(i + 1).width = c.width; });
     ws.addRow(COMPARED_COLUMNS.map((c) => c.header));
 
+    const statusCol = COMPARED_COLUMNS.findIndex((c) => c.key === 'status') + 1;
+    const valueCols = COMPARED_COLUMNS
+      .map((c, i) => (c.key === 'baselineValue' || c.key === 'actualValue' ? i + 1 : 0))
+      .filter(Boolean);
+
     let n = 0;
     for (const r of ledgerRows([t], 'all')) {
       if (n >= MAX_DATA_ROWS) {
         ws.addRow([`… truncated at ${MAX_DATA_ROWS.toLocaleString('en-US')} rows`]);
         break;
       }
-      ws.addRow(
+      const added = ws.addRow(
         COMPARED_COLUMNS.map((c) => {
           const v = r[c.key];
           return v === null || v === undefined ? '' : (v as string | number);
         }),
       );
+
+      // Matches stay unpainted. In a tab that is mostly matches, colour is
+      // only useful if it marks the exceptions.
+      if (r.status !== 'match') {
+        paintStatus(added.getCell(statusCol), r.status);
+        for (const c of valueCols) {
+          added.getCell(c).font = { bold: true, color: { argb: STATUS_STYLE[r.status].font } };
+        }
+      }
       n++;
     }
 
