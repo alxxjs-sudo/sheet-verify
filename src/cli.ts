@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { basename, extname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { runCase, type CaseOptions } from './case.js';
 import { detectSpec } from './detect.js';
 import { mergeSheetSpec } from './workbook.js';
@@ -19,6 +19,7 @@ import type { WorkbookSheetSpec, WorkbookSpec } from './types.js';
  */
 
 const DEFAULT_ROOT = 'report-comparison';
+const RESULT_DIR = 'result';
 const SPREADSHEET = new Set(['.xlsx', '.xlsm', '.csv', '.tsv', '.txt']);
 
 const GOLDEN = /^(golden|baseline|expected|before)\b/i;
@@ -54,20 +55,31 @@ sheet-verify — compare a generated report against a golden output
 USAGE
   sheet-verify [folder] [options]
 
-  With no folder, looks in ./${DEFAULT_ROOT} and runs every case inside it.
-  Give a single case folder to run just that one.
+  With no folder, looks in ./${DEFAULT_ROOT} and runs every case beneath it.
+  Give any folder to run only what is under that one.
 
 LAYOUT
+  A case is any folder holding a golden file and the report to compare. Group
+  them however suits you -- every folder above a case is just a grouping.
+
   ${DEFAULT_ROOT}/
-    case_001/
-      golden.xlsx      the output you trust        (golden|baseline|expected|before)
-      actual.xlsx      the output under test       (actual|new|current|after|report)
-      case.json        optional; overrides what was detected
-      result/          written by this command
-        diff.txt            human-readable summary — start here
-        diff.json           the same, structured
-        differences.xlsx    one row per differing cell; absent if none differed
-        compared.xlsx       every cell checked, a worksheet per table
+    meta.json                          applies to every case below
+    reports/
+      global_standard_cat/
+        meta.json                      applies to this report type
+        case_001/
+          golden.xlsx    the output you trust    (golden|baseline|expected|before)
+          actual.xlsx    the output under test   (actual|new|current|after|report)
+          case.json      optional; only this case
+          result/        written by this command
+            diff.txt            human-readable summary — start here
+            diff.json           the same, structured
+            differences.xlsx    one row per differing cell; absent if none differed
+            compared.xlsx       every cell checked, a worksheet per table
+
+  Configuration is inherited: every meta.json from the root down applies, and
+  the case's own case.json wins. Settings a whole report type shares are
+  written once; only a case that differs -- an extra sheet, say -- needs a file.
 
   Sheets, header rows and row keys are detected from the files, so no
   configuration is needed to start. CSV works the same way.
@@ -105,7 +117,7 @@ const isSpreadsheet = (f: string) => SPREADSHEET.has(extname(f).toLowerCase());
  * folder holds exactly two spreadsheets the older-named one is not guessed at
  * -- an explicit error beats comparing them the wrong way round.
  */
-async function readCase(dir: string): Promise<Case | string> {
+async function readCase(dir: string, root: string): Promise<Case | string> {
   let entries: string[];
   try {
     entries = (await readdir(dir, { withFileTypes: true }))
@@ -132,53 +144,134 @@ async function readCase(dir: string): Promise<Case | string> {
       : `only ${golden} is here. Add the report to compare against it`;
   }
 
-  return { name: basename(dir), dir, golden: join(dir, golden), actual: join(dir, actual) };
+  // The path, not the folder name: case_001 will exist under every report type.
+  const name = DISPLAY(relative(root, dir)) || basename(dir);
+  return { name, dir, golden: join(dir, golden), actual: join(dir, actual) };
 }
 
-/** Case folders under a root, or the root itself when it is one. */
-async function findCases(target: string): Promise<Case[] | string> {
-  const direct = await readCase(target);
-  if (typeof direct !== 'string') return [direct];
+const DISPLAY = (p: string) => p.split(sep).join('/');
+
+/**
+ * Every case folder at any depth. A folder holding a golden file is a case;
+ * anything else is a grouping, so reports can be filed by kind:
+ *
+ *   report-comparison/reports/global_standard_cat/case_001/
+ *   report-comparison/analyses/marginal/case_003/
+ */
+async function findCases(
+  root: string,
+  dir: string = root,
+  found: Case[] = [],
+  problems: string[] = [],
+): Promise<{ cases: Case[]; problems: string[] }> {
+  const here = await readCase(dir, root);
+  if (typeof here !== 'string') {
+    found.push(here);
+    return { cases: found, problems };
+  }
 
   let entries;
   try {
-    entries = await readdir(target, { withFileTypes: true });
+    entries = await readdir(dir, { withFileTypes: true });
   } catch {
-    return `no such folder: ${target}`;
+    problems.push(`  ${DISPLAY(relative(root, dir)) || '.'}: cannot read folder`);
+    return { cases: found, problems };
   }
 
-  const cases: Case[] = [];
-  const problems: string[] = [];
-  for (const e of entries.filter((x) => x.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
-    const c = await readCase(join(target, e.name));
-    if (typeof c === 'string') problems.push(`  ${e.name}: ${c}`);
-    else cases.push(c);
-  }
+  const subdirs = entries
+    .filter((e) => e.isDirectory() && e.name !== RESULT_DIR)
+    .sort((a, b) => a.name.localeCompare(b.name));
 
-  if (!cases.length) {
-    return problems.length
-      ? `no runnable cases in ${target}\n${problems.join('\n')}`
-      : `no cases in ${target}. ${direct}`;
-  }
-  return cases;
+  // A leaf folder that is not a case is worth reporting; a grouping is not.
+  if (!subdirs.length) problems.push(`  ${DISPLAY(relative(root, dir)) || '.'}: ${here}`);
+
+  for (const s of subdirs) await findCases(root, join(dir, s.name), found, problems);
+  return { cases: found, problems };
 }
 
-/** case.json, layered over what detection found. */
-async function overrides(dir: string): Promise<WorkbookSpec> {
+const exists = (p: string) => stat(p).then(() => true, () => false);
+
+/**
+ * The root of the comparison tree, which is not necessarily the folder asked
+ * for: running one report type must apply the same configuration, and produce
+ * the same case names, as running everything. So the root is the outermost
+ * ancestor carrying a meta.json, and the target only decides what to run.
+ */
+export async function findRoot(target: string): Promise<string> {
+  let root = target;
+  let at = target;
+  for (let i = 0; i < 16; i++) {
+    const parent = dirname(at);
+    if (parent === at) break;
+    at = parent;
+    if (await exists(join(at, 'meta.json'))) root = at;
+  }
+  return root;
+}
+
+async function readJson(path: string): Promise<WorkbookSpec | null> {
   try {
-    return JSON.parse(await readFile(join(dir, 'case.json'), 'utf8')) as WorkbookSpec;
-  } catch {
-    return {};
+    return JSON.parse(await readFile(path, 'utf8')) as WorkbookSpec;
+  } catch (e) {
+    // A malformed config is a mistake worth stopping for, but a missing one
+    // is the normal case.
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new Error(`${DISPLAY(path)} is not valid JSON: ${(e as Error).message}`);
   }
 }
 
-function mergeSpecs(detected: WorkbookSpec, given: WorkbookSpec): WorkbookSpec {
-  const sheets: Record<string, WorkbookSheetSpec> = { ...detected.sheets };
+export interface ConfigLayer {
+  path: string;
+  spec: WorkbookSpec;
+}
+
+/**
+ * Configuration inherited down the tree: a meta.json at any level applies to
+ * every case beneath it, and the case's own case.json wins. So the settings a
+ * whole report type shares are written once, and only a case that is genuinely
+ * odd -- an extra sheet, say -- needs a file of its own.
+ */
+export async function configLayers(root: string, dir: string): Promise<ConfigLayer[]> {
+  const rel = relative(root, dir);
+  const steps = rel ? rel.split(sep) : [];
+  const layers: ConfigLayer[] = [];
+
+  let at = root;
+  for (const step of [null, ...steps]) {
+    if (step !== null) at = join(at, step);
+    const path = join(at, 'meta.json');
+    const spec = await readJson(path);
+    if (spec) layers.push({ path, spec });
+  }
+
+  const own = join(dir, 'case.json');
+  const spec = await readJson(own);
+  if (spec) layers.push({ path: own, spec });
+
+  return layers;
+}
+
+function mergeSpecs(base: WorkbookSpec, given: WorkbookSpec): WorkbookSpec {
+  const sheets: Record<string, WorkbookSheetSpec> = { ...base.sheets };
   for (const [name, override] of Object.entries(given.sheets ?? {})) {
     const found = Object.keys(sheets).find((k) => k.toLowerCase() === name.toLowerCase());
     sheets[found ?? name] = mergeSheetSpec(found ? sheets[found] : undefined, override);
   }
-  return { ...detected, ...given, sheets };
+  const merged: WorkbookSpec = { ...base, ...given, sheets };
+  if (base.defaults || given.defaults) {
+    merged.defaults = mergeSheetSpec(base.defaults, given.defaults);
+  }
+  if (base.ignoreSheets || given.ignoreSheets) {
+    // Additive: a type excluding its glossary and a case excluding one more
+    // should end up excluding both.
+    merged.ignoreSheets = [...new Set([...(base.ignoreSheets ?? []), ...(given.ignoreSheets ?? [])])];
+  }
+  return merged;
+}
+
+/** Detection, then every configuration layer over it in order. */
+async function specFor(c: Case, layers: ConfigLayer[]): Promise<WorkbookSpec> {
+  return layers.reduce((acc, l) => mergeSpecs(acc, l.spec), await detectSpec(c.golden));
 }
 
 async function main(): Promise<number> {
@@ -197,24 +290,38 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  const found = await findCases(target);
-  if (typeof found === 'string') {
-    console.error(`sheet-verify: ${found}`);
+  const root = await findRoot(target);
+
+  let found: Case[];
+  let problems: string[];
+  try {
+    ({ cases: found, problems } = await findCases(root, target));
+  } catch (e) {
+    console.error(`sheet-verify: ${(e as Error).message}`);
+    return 1;
+  }
+
+  if (!found.length) {
+    console.error(`sheet-verify: no runnable cases under ${target}`);
+    if (problems.length) console.error(problems.join('\n'));
+    console.error(`\nA case is any folder holding a golden file and the report to compare:\n  ${DEFAULT_ROOT}/reports/<type>/case_001/golden.xlsx\n  ${DEFAULT_ROOT}/reports/<type>/case_001/actual.xlsx`);
     return 1;
   }
 
   if (args.printSpec) {
     for (const c of found) {
-      const spec = mergeSpecs(await detectSpec(c.golden), await overrides(c.dir));
-      console.log(`// ${c.name} — save as ${join(c.dir, 'case.json')}`);
-      console.log(JSON.stringify(spec, null, 2));
+      const layers = await configLayers(root, c.dir);
+      console.log(`// ${c.name}`);
+      for (const l of layers) console.log(`//   layered with ${DISPLAY(relative(root, l.path))}`);
+      console.log(`//   save edits as ${DISPLAY(relative(root, join(c.dir, 'case.json')))}`);
+      console.log(JSON.stringify(await specFor(c, layers), null, 2));
     }
     return 0;
   }
 
   let failed = 0;
   for (const c of found) {
-    const spec = mergeSpecs(await detectSpec(c.golden), await overrides(c.dir));
+    const spec = await specFor(c, await configLayers(root, c.dir));
     const options: CaseOptions = {
       ...spec,
       cellLedger: args.ledger,

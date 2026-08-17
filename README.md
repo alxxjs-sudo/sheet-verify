@@ -63,7 +63,7 @@ sheets, header rows and row keys are worked out from the files themselves.
 
 ```
 report-comparison/
-  case_001/
+  reports/global_standard_cat/case_001/
     golden.xlsx      the output you trust
     actual.xlsx      the output under test
 ```
@@ -75,8 +75,8 @@ npx sheet-verify
 ```
 
 ```
-✗ case_001  1 sheet failing, 1 table to review
-    report-comparison/case_001/result/diff.txt
+✗ reports/global_standard_cat/case_001  1 sheet failing, 1 table to review
+    …/case_001/result/diff.txt
 
 1 case, 1 failing
 ```
@@ -84,7 +84,7 @@ npx sheet-verify
 **3. Read `result/`:**
 
 ```
-report-comparison/case_001/
+report-comparison/reports/global_standard_cat/case_001/
   golden.xlsx
   actual.xlsx
   result/
@@ -111,8 +111,39 @@ npx sheet-verify --ledger all         # record matching cells too
 npx sheet-verify --help
 ```
 
-**Case folders** are any subfolders of `report-comparison`. Name them however
-you like — `case_001`, `march-invoices`, `bug-4417`.
+**A case is any folder holding a golden file and the report to compare**, at any
+depth. Everything above a case is just grouping, so file them by kind:
+
+```
+report-comparison/
+  meta.json                          applies to every case below
+  reports/
+    global_standard_cat/
+      meta.json                      applies to this report type
+      case_001/  case_002/  …
+    pro_forma/
+      meta.json
+      case_001/
+        case.json                    only this case
+  analyses/
+    marginal/
+      case_001/  case_002/  …
+```
+
+**Configuration is inherited down the tree.** Every `meta.json` from the root
+down applies in order, and the case's own `case.json` wins. So the settings a
+whole report type shares are written once, and only a case that genuinely
+differs — an extra sheet or two — needs a file of its own.
+
+Cases are named by their path, since `case_001` will exist under every type:
+
+```
+✗ reports/global_standard_cat/case_002  1 sheet failing
+```
+
+Targeting a subfolder runs only what is under it, but still applies the
+configuration above it — so `sheet-verify reports/pro_forma` gives the same
+verdicts for those cases as a full run.
 
 **File names** are matched by prefix, so `golden.xlsx` / `actual.xlsx` is the
 convention but not the only option:
@@ -196,6 +227,21 @@ rewritten on every run:
   "defaults": { "ignoreRows": ["Generated At"], "ignoreColumns": ["Run Id"] }
 }
 ```
+
+**Put it at the right level.** The same file format works as `meta.json` at any
+folder above a case, so a setting that applies to a whole report type belongs
+there rather than copied into every case:
+
+| goes in | applies to |
+| --- | --- |
+| `report-comparison/meta.json` | every case — timestamps, run ids |
+| `reports/<type>/meta.json` | that report type — its keys, its decoration sheets |
+| `<case>/case.json` | one case — an extra sheet it happens to have |
+
+Lists accumulate down the layers rather than replacing each other, so a type
+excluding its glossary and a case excluding one more sheet ends up excluding
+both. `--print-spec` lists every layer that was applied, so it is always
+answerable which rules a result came from.
 
 ## How it works
 
