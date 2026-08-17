@@ -24,6 +24,7 @@ were planted:
 - [Install](#install)
 - [Quick start](#quick-start) — two files in a folder, one command
 - [The command](#the-command)
+- [Detection will not invent a row key](#detection-will-not-invent-a-row-key) — read this one
 - [How it works](#how-it-works)
 - [Cases](#cases) — the folder, the artefacts, re-blessing
 - [Describing your report](#describing-your-report) — keys, sheets, tables, tolerance
@@ -123,7 +124,53 @@ convention but not the only option:
 
 `.xlsx`, `.xlsm` and `.csv` all work, and both files must be the same kind.
 
-### When the detection gets it wrong
+### What gets detected
+
+From the **golden** file, for every sheet:
+
+- **where each table starts and stops** — a sheet is split at blank rows, so an
+  "output info" block above the data becomes its own table rather than swallowing
+  the data below it
+- **the header row** — the first row of each block
+- **the row key** — the column, or pair of columns, that identifies a row
+
+A column qualifies as a key only if **every** value is present and **no** value
+repeats. A purely numeric column is refused unless its name says it identifies
+something: `Amount` is distinct across three rows and useless across three
+thousand, while `Invoice No` is kept. Failing a single column, it tries pairs
+from the leftmost few — that is how `PolicyId` + `Period` is found.
+
+### Detection will not invent a row key
+
+**This is the one behaviour to know before trusting a result.**
+
+If no column or pair identifies a row, that table is **not compared at all**. It
+is never guessed at, because a wrong key is worse than no key: rows would be
+paired arbitrarily and the diff would be confident nonsense.
+
+The table is reported instead, so the gap is visible rather than silent. In
+`diff.txt`:
+
+```
+SHEETS TO REVIEW
+  ? table "Summary" — no keyColumns configured for this table
+```
+
+and in the one-line summary as `1 sheet not compared`.
+
+**The signal to watch for is a case reporting fewer tables compared than your
+report actually has.** That is not a pass — it is the tool saying it does not
+know how to identify a row there. Name the key yourself:
+
+```json
+{ "sheets": { "Summary": { "keyColumns": ["Region", "Band"] } } }
+```
+
+A table with genuinely no key — a totals band, a pivot — cannot be compared by
+this tool at all. Either give it a composite key that is unique, or exclude the
+sheet with `ignoreSheets` so it stops being reported.
+
+### Correcting anything else
 
 `--print-spec` shows exactly what was worked out from your files:
 
@@ -132,21 +179,14 @@ npx sheet-verify --print-spec > report-comparison/case_001/case.json
 ```
 
 Edit that file and it is layered over the detection on the next run. Everything
-in it is optional — you only write the parts you want to change. The most common
-one by far is silencing a timestamp that is rewritten on every run:
+in it is optional — you only write the parts you want to change, and the rest of
+the detection is kept. The most common entry by far silences a timestamp that is
+rewritten on every run:
 
 ```json
 {
   "defaults": { "ignoreRows": ["Generated At"], "ignoreColumns": ["Run Id"] }
 }
-```
-
-Detection **will not invent a row key**. If no column or pair of columns
-identifies a row, that table is reported as *not compared* rather than being
-guessed at, and `case.json` is where you name the key it could not find:
-
-```json
-{ "sheets": { "Summary": { "keyColumns": ["Region", "Band"] } } }
 ```
 
 ## How it works
@@ -364,7 +404,7 @@ typo, and the alternative is a sheet silently going unchecked forever.
 | both | compared, all layers |
 | the new output only | **noted, not compared** — there is nothing to compare it against |
 | the golden output only | **defect** — output that used to be produced is gone |
-| both, but no `keyColumns` | listed as *not compared*, so the gap stays visible |
+| both, but no `keyColumns` | **not compared** — see [above](#detection-will-not-invent-a-row-key); the gap is reported, never guessed at |
 
 The asymmetry is deliberate. A new sheet is additive and harmless; a sheet that
 has vanished means consumers stopped receiving something they expect.
@@ -427,7 +467,13 @@ is a row and no column exclusion can reach it.
 Start with the one-line summary, then `diff.txt`, then `differences.xlsx` if you need
 to work through individual cells.
 
-Two distinctions do most of the work:
+Three distinctions do most of the work:
+
+**Compared vs not compared.** A table with no row key is skipped, not passed.
+Check the header line — `10 tables compared` — against what your report actually
+contains, and treat any `not compared` in the summary as work to do rather than
+a clean result. See [Detection will not invent a row
+key](#detection-will-not-invent-a-row-key).
 
 **Root cause vs cascade.** One wrong input feeding two formulas is reported as
 one cause and two consequences, not three failures. `diff.txt` shows the causes

@@ -72,6 +72,13 @@ LAYOUT
   Sheets, header rows and row keys are detected from the files, so no
   configuration is needed to start. CSV works the same way.
 
+  Detection never invents a row key. If nothing identifies a row on some
+  table, that table is NOT COMPARED and is reported as such -- a wrong key
+  would pair rows arbitrarily and produce a confident wrong answer. Watch for
+  "not compared" in the summary, and name the key in case.json:
+
+    { "sheets": { "Summary": { "keyColumns": ["Region", "Band"] } } }
+
 OPTIONS
   --bless            replace the golden output with the new report and pass
   --print-spec       print the detected layout as JSON and exit, so it can be
