@@ -170,6 +170,14 @@ A table with genuinely no key — a totals band, a pivot — cannot be compared 
 this tool at all. Either give it a composite key that is unique, or exclude the
 sheet with `ignoreSheets` so it stops being reported.
 
+**A narrated walkthrough of exactly this** — a sheet detection cannot key, the
+green-but-incomplete run it produces, and the three-line `case.json` that fixes
+it — is a single command:
+
+```bash
+npm run build && npm run example:case-json
+```
+
 ### Correcting anything else
 
 `--print-spec` shows exactly what was worked out from your files:

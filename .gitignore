@@ -7,3 +7,4 @@ playwright-report/
 *.tsbuildinfo
 examples/cases/
 report-comparison/
+examples/cli-cases/

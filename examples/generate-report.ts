@@ -40,6 +40,14 @@ export interface Variant {
   /** A rate above 1.0 -- wrong, but wrong in *both* files, so only an
    *  invariant can catch it. */
   impossibleRate?: boolean;
+  /**
+   * Adds a Summary sheet whose rows are identified by *three* columns.
+   * Detection tries single columns and then pairs, so it finds no key here
+   * and reports the sheet as not compared -- the case for a case.json.
+   */
+  summarySheet?: boolean;
+  /** A premium drifts on the Summary sheet, findable only once it is keyed. */
+  summaryDefect?: boolean;
 }
 
 /** The release under test: every kind of change at once. */
@@ -232,6 +240,32 @@ export function buildSheets(v: Variant): SheetData[] {
   };
 
   const sheets = [policies, premiums, claims, commissions, regions];
+
+  if (v.summarySheet) {
+    // No single column is unique, and no *pair* is either: Region+Band repeats
+    // across quarters, Region+Quarter across bands, Band+Quarter across
+    // regions. Only all three together identify a row.
+    const rows: Row[] = [];
+    for (const region of ['Sofia', 'Varna']) {
+      for (const band of ['A', 'B']) {
+        for (const quarter of ['Q1', 'Q2']) {
+          const drift = v.summaryDefect && region === 'Varna' && band === 'B' && quarter === 'Q2';
+          rows.push([region, band, quarter, drift ? 91500 : 88000, 24000, 0]);
+        }
+      }
+    }
+    sheets.push({
+      name: 'Summary',
+      headers: ['Region', 'Band', 'Quarter', 'Premium', 'Claims', 'Loss Ratio'],
+      rows,
+      formulas: {
+        'Loss Ratio': {
+          text: (r, h) => `${at(h, 'Claims')}${r}/${at(h, 'Premium')}${r}`,
+          value: (row, h) => val(row, h, 'Claims') / val(row, h, 'Premium'),
+        },
+      },
+    });
+  }
 
   if (v.extraSheet) {
     sheets.push({

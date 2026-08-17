@@ -54,6 +54,36 @@ Each info block holds a `Generated At` timestamp that changes on every run. It i
 excluded with `ignoreRows: ['Generated At']` — the row-wise counterpart of
 `ignoreColumns`, since in a key-value block the per-run value is a row.
 
+## When you need a case.json
+
+A separate, narrated walkthrough:
+
+```bash
+npm run build && npm run example:case-json
+```
+
+It builds a report with a `Summary` sheet whose rows are identified by **three**
+columns — `Region` + `Band` + `Quarter`. Detection tries single columns and then
+pairs, so it finds no key there, and a defect is planted on that sheet. Five
+steps, driving the real CLI at each one:
+
+1. two files in a case folder
+2. run it — **passes**, reporting `1 sheet not compared`, defect unreported
+3. `--print-spec` shows `Summary · Table 2` has a `headerRow` and no `keyColumns`
+4. write a three-line `case.json` naming the key
+5. run again — `12 tables compared`, and the defect surfaces:
+   `Varna / B / Q2 · Premium @D16: 88000 → 91500  (Δ 3500)`
+
+The point of it is step 2. A green run with `not compared` in the summary is not
+a clean bill of health, and this is the cheapest way to see why.
+
+It also shows a subtlety worth knowing: the `case.json` names the key on the
+**sheet**, not on `Table 2`. A per-table value beats a sheet-level one, so the
+info block keeps the `Field` key detection gave it, and only the table that had
+none picks the new key up.
+
+The folder is left in `examples/cli-cases/` with its `case.json` to read.
+
 ## The files
 
 - **`generate-report.ts`** — builds the workbook. Takes a `Variant` describing
