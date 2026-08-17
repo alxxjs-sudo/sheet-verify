@@ -64,10 +64,10 @@ LAYOUT
       actual.xlsx      the output under test       (actual|new|current|after|report)
       case.json        optional; overrides what was detected
       result/          written by this command
-        diff.txt         the differences, human-readable
-        diff.json        the same, structured
-        cells.xlsx       one row per differing cell
-        compared.xlsx    every cell checked, a worksheet per table
+        diff.txt            human-readable summary — start here
+        diff.json           the same, structured
+        differences.xlsx    one row per differing cell
+        compared.xlsx       every cell checked, a worksheet per table
 
   Sheets, header rows and row keys are detected from the files, so no
   configuration is needed to start. CSV works the same way.
@@ -217,7 +217,7 @@ async function main(): Promise<number> {
         actual: basename(c.actual),
         diffText: join('result', 'diff.txt'),
         diffJson: join('result', 'diff.json'),
-        cells: join('result', 'cells.xlsx'),
+        differences: join('result', 'differences.xlsx'),
         compared: join('result', 'compared.xlsx'),
       },
     };

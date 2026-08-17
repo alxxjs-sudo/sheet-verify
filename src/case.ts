@@ -16,19 +16,19 @@ import type { ComparedTable } from './workbook.js';
  * can be reviewed, archived or attached to a ticket as a unit.
  *
  *   cases/monthly-policy-export/
- *     golden.xlsx     committed; the contract
- *     actual.xlsx     the latest run, copied in
- *     diff.txt        human-readable differences
- *     diff.json       the same, structured
- *     cells.xlsx      one row per differing cell, formatted for working through
- *     compared.xlsx   every cell compared, one worksheet per compared table
+ *     golden.xlsx        committed; the contract
+ *     actual.xlsx        the latest run, copied in
+ *     diff.txt           human-readable summary
+ *     diff.json          the same, structured
+ *     differences.xlsx   one row per differing cell
+ *     compared.xlsx      every cell compared, one worksheet per table
  */
 export interface CaseFiles {
   golden: string;
   actual: string;
   diffText: string;
   diffJson: string;
-  cells: string;
+  differences: string;
   compared: string;
 }
 
@@ -76,7 +76,7 @@ const DEFAULTS: CaseFiles = {
   actual: 'actual.xlsx',
   diffText: 'diff.txt',
   diffJson: 'diff.json',
-  cells: 'cells.xlsx',
+  differences: 'differences.xlsx',
   compared: 'compared.xlsx',
 };
 
@@ -99,8 +99,8 @@ async function writeCsv(path: string, lines: Generator<string>): Promise<void> {
 }
 
 /**
- * The ledger format follows the file name: `cells.xlsx` gets a formatted
- * table, `cells.csv` gets streamed text. Naming the file is a clearer way to
+ * The ledger format follows the file name: `differences.xlsx` gets a formatted
+ * table, `differences.csv` gets streamed text. Naming the file is a clearer way to
  * choose than a separate option that could contradict it.
  */
 async function writeLedger(
@@ -134,7 +134,7 @@ export async function runCase(
     actual: join(dir, names.actual),
     diffText: join(dir, names.diffText),
     diffJson: join(dir, names.diffJson),
-    cells: join(dir, names.cells),
+    differences: join(dir, names.differences),
     compared: join(dir, names.compared),
   };
   const name = basename(dir);
@@ -173,14 +173,14 @@ export async function runCase(
   // A name may point into a subfolder -- the CLI keeps its output under
   // result/ so it cannot be mistaken for one of the two inputs.
   const parents = new Set(
-    [files.diffText, files.diffJson, files.cells, files.compared].map((f) => dirname(f)),
+    [files.diffText, files.diffJson, files.differences, files.compared].map((f) => dirname(f)),
   );
   await Promise.all([...parents].map((d) => mkdir(d, { recursive: true })));
 
   await Promise.all([
     writeFile(files.diffText, `${name}\n${'='.repeat(name.length)}\n\n${report}\n`, 'utf8'),
     writeFile(files.diffJson, JSON.stringify(diff, null, 2), 'utf8'),
-    writeLedger(files.cells, compared, options.cellLedger ?? 'differences'),
+    writeLedger(files.differences, compared, options.cellLedger ?? 'differences'),
     (options.comparedLedger ?? true)
       ? writeComparedWorkbook(files.compared, compared)
       : Promise.resolve(),

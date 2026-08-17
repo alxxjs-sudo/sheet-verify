@@ -40,7 +40,7 @@ async function readLedger(path: string): Promise<{
 }> {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(path);
-  const ws = wb.getWorksheet('Cells')!;
+  const ws = wb.getWorksheet("Differences")!;
 
   const headers: string[] = [];
   ws.getRow(1).eachCell((cell, c) => { headers[c - 1] = String(cell.value ?? ''); });
@@ -83,7 +83,7 @@ test.describe('runCase', () => {
     const r = await runCase(actual, dir, SPEC); // the run under test
 
     expect(r.ok).toBe(false);
-    for (const f of [r.files.actual, r.files.diffText, r.files.diffJson, r.files.cells]) {
+    for (const f of [r.files.actual, r.files.diffText, r.files.diffJson, r.files.differences]) {
       expect(await exists(f)).toBe(true);
     }
 
@@ -110,8 +110,8 @@ test.describe('runCase', () => {
     await runCase(golden, dir, SPEC);
     const r = await runCase(actual, dir, SPEC);
 
-    expect(r.files.cells.endsWith('cells.xlsx')).toBe(true);
-    const ws = await readLedger(r.files.cells);
+    expect(r.files.differences.endsWith('differences.xlsx')).toBe(true);
+    const ws = await readLedger(r.files.differences);
 
     expect(ws.headers).toEqual([
       'Sheet', 'Table', 'Row key', 'Column', 'Status', 'Root cause',
@@ -145,7 +145,7 @@ test.describe('runCase', () => {
     await runCase(golden, dir, SPEC);
     const r = await runCase(actual, dir, SPEC);
 
-    const ws = await readLedger(r.files.cells);
+    const ws = await readLedger(r.files.differences);
     const cause = ws.rows.find((r) => r['Root cause'] === 'yes')!;
 
     expect(typeof cause['Golden value']).toBe('number');
@@ -164,8 +164,8 @@ test.describe('runCase', () => {
     const r = await runCase(actual, dir, SPEC);
 
     const wb = new ExcelJS.Workbook();
-    await wb.xlsx.readFile(r.files.cells);
-    const ws = wb.getWorksheet('Cells')!;
+    await wb.xlsx.readFile(r.files.differences);
+    const ws = wb.getWorksheet("Differences")!;
 
     expect(ws.views[0]).toMatchObject({ state: 'frozen', ySplit: 1 });
     expect(ws.getRow(1).font?.bold).toBe(true);
@@ -187,9 +187,9 @@ test.describe('runCase', () => {
     const r = await runCase(actual, dir, SPEC);
 
     const wb = new ExcelJS.Workbook();
-    await wb.xlsx.readFile(r.files.cells);
+    await wb.xlsx.readFile(r.files.differences);
 
-    for (const path of [r.files.cells, r.files.compared]) {
+    for (const path of [r.files.differences, r.files.compared]) {
       const book = new ExcelJS.Workbook();
       await book.xlsx.readFile(path);
       for (const ws of book.worksheets) {
@@ -314,7 +314,7 @@ test.describe('runCase', () => {
     const r = await runCase(actual, dir, { ...SPEC, comparedLedger: false });
 
     expect(await exists(r.files.compared)).toBe(false);
-    expect(await exists(r.files.cells)).toBe(true);
+    expect(await exists(r.files.differences)).toBe(true);
   });
 
   test('a clean run still produces a readable, empty ledger', async () => {
@@ -326,7 +326,7 @@ test.describe('runCase', () => {
     const r = await runCase(actual, dir, SPEC);
 
     expect(r.ok).toBe(true);
-    const ws = await readLedger(r.files.cells);
+    const ws = await readLedger(r.files.differences);
     expect(ws.headers[0]).toBe('Sheet');
     expect(ws.rows).toHaveLength(0);
   });
@@ -340,10 +340,10 @@ test.describe('runCase', () => {
 
     await runCase(golden, dir, SPEC);
     const r = await runCase(actual, dir, {
-      ...SPEC, names: { cells: 'cells.csv' }, cellLedger: 'all',
+      ...SPEC, names: { differences: 'differences.csv' }, cellLedger: 'all',
     });
 
-    const lines = rows(await readFile(r.files.cells, 'utf8'));
+    const lines = rows(await readFile(r.files.differences, 'utf8'));
     expect(lines[0]).toBe(
       'Sheet,Table,Row key,Column,Status,Root cause,Golden cell,Actual cell,' +
       'Golden value,Actual value,Delta,Tolerance,Golden formula,Actual formula',
@@ -388,11 +388,11 @@ test.describe('runCase', () => {
 
     const r = await runCase(actual, dir, {
       ...SPEC,
-      names: { golden: 'baseline.xlsx', cells: 'audit.csv' },
+      names: { golden: 'baseline.xlsx', differences: 'audit.csv' },
     });
 
     expect(r.files.golden.endsWith('baseline.xlsx')).toBe(true);
-    expect(r.files.cells.endsWith('audit.csv')).toBe(true);
+    expect(r.files.differences.endsWith('audit.csv')).toBe(true);
   });
 });
 

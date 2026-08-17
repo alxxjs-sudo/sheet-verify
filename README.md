@@ -87,10 +87,10 @@ report-comparison/case_001/
   golden.xlsx
   actual.xlsx
   result/
-    diff.txt         what differed, in reading order
-    diff.json        the same, structured
-    cells.xlsx       one row per differing cell
-    compared.xlsx    every cell checked, a worksheet per table
+    diff.txt            human-readable summary — start here
+    diff.json           the same, structured, for scripts and CI
+    differences.xlsx    one row per differing cell
+    compared.xlsx       every cell checked, a worksheet per table
 ```
 
 Exit code is `0` when everything matched and `1` when it did not, so it drops
@@ -241,7 +241,7 @@ any cell pair:
 - **integrity errors and invariant failures** — properties of the file, not of a
   comparison
 
-### cells.xlsx
+### differences.xlsx
 
 For working through failures cell by cell. It arrives as a real Excel table —
 filter buttons, banded rows, header frozen, columns already wide enough to read,
@@ -283,7 +283,7 @@ everything, and each tab stays clear of Excel's million-row ceiling on its own.
 A table that would exceed it anyway is truncated with a row saying so.
 
 Anything that is not a plain match is highlighted, in the same colours
-`cells.xlsx` uses. Matches are left unpainted — in a tab that is mostly matches,
+`differences.xlsx` uses. Matches are left unpainted — in a tab that is mostly matches,
 colour is only useful if it marks the exceptions. Grey marks a cell that was
 *excluded* rather than wrong, so `ignoreRows` and `ignoreColumns` show their
 effect here.
@@ -293,8 +293,8 @@ effect here.
 ```ts
 await expect(actual).toMatchCase(dir, {
   ...spec,
-  cellLedger: 'all',                  // fold matches into cells.xlsx too
-  names: { cells: 'cells.csv' },      // .csv streams instead of building a workbook
+  cellLedger: 'all',                  // fold matches into differences.xlsx too
+  names: { cells: 'differences.csv' },      // .csv streams instead of building a workbook
   comparedLedger: false,              // skip compared.xlsx entirely
 });
 ```
@@ -414,14 +414,14 @@ is a row and no column exclusion can reach it.
 
 ## Reading the output
 
-Start with the one-line summary, then `diff.txt`, then `cells.xlsx` if you need
+Start with the one-line summary, then `diff.txt`, then `differences.xlsx` if you need
 to work through individual cells.
 
 Two distinctions do most of the work:
 
 **Root cause vs cascade.** One wrong input feeding two formulas is reported as
 one cause and two consequences, not three failures. `diff.txt` shows the causes
-and counts the cascades; `cells.xlsx` marks each row `yes` or `no` in *Root
+and counts the cascades; `differences.xlsx` marks each row `yes` or `no` in *Root
 cause*. Fix causes; consequences follow.
 
 **Defect vs review.** A defect fails the run. A review item — an inserted
@@ -584,7 +584,7 @@ the template's own formulas read from, so the fragile parts are never touched.
 
 | option | default | meaning |
 | --- | --- | --- |
-| `cellLedger` | `'differences'` | scope of `cells.xlsx`: `'differences'` \| `'all'` \| `'none'` |
+| `cellLedger` | `'differences'` | scope of `differences.xlsx`: `'differences'` \| `'all'` \| `'none'` |
 | `comparedLedger` | `true` | write `compared.xlsx` at all |
 | `names` | see [Cases](#cases) | file names within the case folder |
 | `updateGolden` | `false` | overwrite the golden output and pass |

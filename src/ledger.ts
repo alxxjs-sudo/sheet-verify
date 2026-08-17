@@ -342,7 +342,7 @@ export async function writeLedgerWorkbook(
 ): Promise<number> {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'sheet-verify';
-  const ws = wb.addWorksheet('Cells', {
+  const ws = wb.addWorksheet("Differences", {
     views: [{ state: 'frozen', ySplit: 1 }],
   });
 
@@ -358,7 +358,7 @@ export async function writeLedgerWorkbook(
 
   if (values.length) {
     ws.addTable({
-      name: 'Cells',
+      name: "Differences",
       ref: 'A1',
       headerRow: true,
       style: { theme: 'TableStyleLight8', showRowStripes: true },

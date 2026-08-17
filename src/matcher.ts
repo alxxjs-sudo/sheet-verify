@@ -229,7 +229,7 @@ export const expect = baseExpect.extend({
       `  actual   ${result.files.actual}\n` +
       `  diff     ${result.files.diffText}\n` +
       `  json     ${result.files.diffJson}\n` +
-      `  cells    ${result.files.cells}\n`;
+      `  diffs    ${result.files.differences}\n`;
 
     if (result.ok) {
       return {

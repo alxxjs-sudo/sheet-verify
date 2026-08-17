@@ -8,10 +8,10 @@
  *   examples/cases/<name>/
  *     golden.xlsx   the output the new report is judged against
  *     actual.xlsx   the new report, copied in
- *     diff.txt      the differences, human-readable
- *     diff.json     the same, structured
- *     cells.xlsx    one row per differing cell, formatted for working through
- *     compared.xlsx every cell checked, one worksheet per compared table
+ *     diff.txt            human-readable summary
+ *     diff.json           the same, structured
+ *     differences.xlsx    one row per differing cell
+ *     compared.xlsx       every cell checked, one worksheet per table
  *
  * In real use `golden.xlsx` is committed and reviewed in the pull request;
  * here it is generated so the examples are self-contained.
@@ -55,8 +55,8 @@ for (const c of CASES) {
 
   // Tally the ledger so the shape of each outcome is visible at a glance.
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(result.files.cells);
-  const ws = wb.getWorksheet('Cells')!;
+  await wb.xlsx.readFile(result.files.differences);
+  const ws = wb.getWorksheet("Differences")!;
   const tally = new Map<string, number>();
   for (let r = 2; r <= ws.rowCount; r++) {
     const status = String(ws.getRow(r).getCell(5).value ?? '');
@@ -64,7 +64,7 @@ for (const c of CASES) {
   }
   const cells = [...tally].sort((a, b) => b[1] - a[1])
     .map(([s, n]) => `${n} ${s}`).join(', ');
-  console.log(`${pad('', 24)} cells.xlsx: ${cells || 'no differing cells'}`);
+  console.log(`${pad('', 24)} differences.xlsx: ${cells || 'no differing cells'}`);
 }
 
 console.log(`\n${CASES.length} cases run, all in ${ROOT}`);
