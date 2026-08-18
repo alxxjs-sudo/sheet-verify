@@ -20,6 +20,7 @@
     "fidelity": "node dist/fidelity-cli.js",
     "example": "node --experimental-strip-types examples/run-cases.ts",
     "compare": "node dist/cli.js",
+    "clean": "node scripts/clean-results.mjs",
     "example:case-json": "node --experimental-strip-types examples/case-json-demo.ts"
   },
   "dependencies": {

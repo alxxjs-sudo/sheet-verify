@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import ExcelJS from 'exceljs';
 import { runCase, formatLedger, runWorkbook } from '../src/index.js';
 import type { CaseOptions } from '../src/index.js';
-import { buildMultiSheet, buildTwoTableSheet, DIR } from './fixtures.js';
+import { buildMultiSheet, buildTwoTableSheet, buildSweepWorkbook, DIR } from './fixtures.js';
 
 const SPEC: CaseOptions = {
   sheets: {
@@ -57,6 +57,70 @@ async function readLedger(path: string): Promise<{
   return { headers, rows: out };
 }
 
+test.describe('compared.xlsx value columns', () => {
+  test('a formula with no stored result shows the formula, not an empty cell', async () => {
+    // A file straight from the generator stores no computed results, so these
+    // cells came back blank -- indistinguishable from a genuinely empty cell,
+    // which is the opposite of what this file is for.
+    const dir = await caseDir('formula-display');
+    const SPEC = {
+      defaults: { requireCachedValues: false },
+      sheets: { Policies: { keyColumns: ['PolicyId'] } },
+    } as CaseOptions;
+
+    const golden = await buildSweepWorkbook('cmp-fx-golden.xlsx');
+    await runCase(golden, dir, SPEC);
+    const actual = await buildSweepWorkbook('cmp-fx-actual.xlsx', { sumDrift: { 'P-1002': 90000 } });
+    const r = await runCase(actual, dir, SPEC);
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(r.files.compared);
+    const ws = wb.worksheets.find((w) => w.name.includes('Policies'))!;
+
+    const headers: string[] = [];
+    ws.getRow(1).eachCell((c, i) => { headers[i - 1] = String(c.value ?? ''); });
+    const col = headers.indexOf('Golden value') + 1;
+
+    const annual: string[] = [];
+    for (let row = 2; row <= ws.rowCount; row++) {
+      if (String(ws.getRow(row).getCell(2).value ?? '') !== 'Annual Cost') continue;
+      annual.push(String(ws.getRow(row).getCell(col).value ?? ''));
+    }
+
+    expect(annual.length).toBeGreaterThan(0);
+    expect(annual.every((v) => v.startsWith('fx '))).toBe(true);
+    expect(annual[0]).toContain('C2*D2');
+    // Not written as "=..." -- Excel would try to evaluate it, and those
+    // references mean nothing in this workbook.
+    expect(annual.every((v) => !v.startsWith('='))).toBe(true);
+  });
+
+  test('a cell that is genuinely empty stays empty', async () => {
+    const dir = await caseDir('formula-display-blank');
+    const SPEC = {
+      defaults: { requireCachedValues: false },
+      sheets: { Policies: { keyColumns: ['PolicyId'] }, Notes: { headerRow: 2 } },
+    } as CaseOptions;
+
+    const golden = await buildSweepWorkbook('cmp-blank-golden.xlsx');
+    await runCase(golden, dir, SPEC);
+    const r = await runCase(await buildSweepWorkbook('cmp-blank-actual.xlsx'), dir, SPEC);
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(r.files.compared);
+    const ws = wb.worksheets.find((w) => w.name.includes('Notes'))!;
+
+    // Nothing on Notes is a formula, so nothing there should be marked as one.
+    let seen = 0;
+    for (let row = 2; row <= ws.rowCount; row++) {
+      const v = String(ws.getRow(row).getCell(5).value ?? '');
+      expect(v.startsWith('fx ')).toBe(false);
+      seen++;
+    }
+    expect(seen).toBeGreaterThan(0);
+  });
+});
+
 test.describe('runCase', () => {
   test('creates the golden output on first run and passes', async () => {
     const dir = await caseDir('first-run');
@@ -83,11 +147,11 @@ test.describe('runCase', () => {
     const r = await runCase(actual, dir, SPEC); // the run under test
 
     expect(r.ok).toBe(false);
-    for (const f of [r.files.actual, r.files.diffText, r.files.diffJson, r.files.differences]) {
+    for (const f of [r.files.actual, r.files.report, r.files.diffJson, r.files.differences]) {
       expect(await exists(f)).toBe(true);
     }
 
-    const text = await readFile(r.files.diffText, 'utf8');
+    const text = await readFile(r.files.report, 'utf8');
     expect(text).toContain('artefacts');       // the case name heads the file
     expect(text).toContain('P-1003');
 
@@ -381,7 +445,7 @@ test.describe('runCase', () => {
 
     expect(r.ok).toBe(false);
     expect(await exists(r.files.differences)).toBe(false);
-    expect(await exists(r.files.diffText)).toBe(true);
+    expect(await exists(r.files.report)).toBe(true);
   });
 
   test('naming the ledger .csv streams text instead, for large cases', async () => {

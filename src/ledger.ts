@@ -1,7 +1,9 @@
 import ExcelJS from 'exceljs';
 import type { Cell, CellValue, ResolvedSpec } from './types.js';
 import type { ComparedTable } from './workbook.js';
-import { canonHeader, displayKey, toleranceFor } from './model.js';
+import {
+  canonHeader, displayKey, equalValues, rowKeyMatcher, toleranceFor,
+} from './model.js';
 
 /**
  * What happened to one cell. `match` is only ever emitted under the 'all'
@@ -16,6 +18,8 @@ export type CellStatus =
   | 'within-tolerance'
   | 'ignored-column'
   | 'ignored-row'
+  /** Run identity, named by address in `metadata`. Never a difference. */
+  | 'metadata'
   | 'row-added'
   | 'row-removed'
   | 'column-added'
@@ -56,7 +60,7 @@ interface ColumnDef {
 const COLUMNS: ColumnDef[] = [
   { key: 'sheet', header: 'Sheet', width: 18 },
   { key: 'table', header: 'Table', width: 14 },
-  { key: 'rowKey', header: 'Row key', width: 26 },
+  { key: 'rowKey', header: 'Row key', width: 34 },
   { key: 'column', header: 'Column', width: 20 },
   { key: 'status', header: 'Status', width: 18 },
   { key: 'rootCause', header: 'Root cause', width: 12 },
@@ -70,7 +74,8 @@ const COLUMNS: ColumnDef[] = [
   { key: 'actualFormula', header: 'Actual formula', width: 30 },
 ];
 
-const num = (n: number): number => Number(n.toPrecision(12));
+/** Kept exact: the delta is the whole point of the column. */
+const num = (n: number): number => n;
 
 function normalised(c: Cell, spec: ResolvedSpec): string | null {
   if (!c.formula) return null;
@@ -85,12 +90,19 @@ function statusOf(b: Cell, n: Cell, spec: ResolvedSpec, tol: number): CellStatus
   }
   if (b.kind !== n.kind && b.kind !== 'empty' && n.kind !== 'empty') return 'type-differs';
 
-  if (typeof b.value === 'number' && typeof n.value === 'number') {
-    const delta = Math.abs(b.value - n.value);
-    if (delta === 0) return 'match';
-    return delta <= tol ? 'within-tolerance' : 'value-differs';
-  }
-  return String(b.value ?? '') === String(n.value ?? '') ? 'match' : 'value-differs';
+  // The same rule the comparer applies, IEEE-754 slack included. Reimplemented
+  // here once, it reported a total recomputed via a different route as a
+  // difference of 0.00000000000001 -- while report.md, built from the diff,
+  // said the same cell was fine.
+  if (!equalValues(b.value, n.value, tol)) return 'value-differs';
+  if (typeof b.value !== 'number' || typeof n.value !== 'number') return 'match';
+  if (b.value === n.value) return 'match';
+
+  // A gap the configured tolerance absorbed is worth a row of its own; a gap
+  // only the IEEE-754 slack absorbed is not. The two numbers agree to every
+  // digit Excel keeps, so they are the same number, and calling that
+  // "within-tolerance" credits a tolerance that may well be zero.
+  return equalValues(b.value, n.value, 0) ? 'match' : 'within-tolerance';
 }
 
 const deltaOf = (b?: Cell, n?: Cell): number | null =>
@@ -134,8 +146,37 @@ export function* ledgerRows(
       String(b.value ?? '') === String(n.value ?? '') &&
       (b.formula ?? '') === (n.formula ?? '');
 
+    /**
+     * What to call a row in the ledger.
+     *
+     * A keyed table names itself -- "P-1003 / 2026-08" says which row it is.
+     * A table matched by position has only an ordinal, and "#3" tells a reader
+     * nothing at all; the row they are looking at is the one labelled
+     * "% Change" or "Label B", and that text is sitting right there in the
+     * row. So the ordinal is kept, because it is what the two sides were
+     * matched on, and the label is put beside it.
+     */
+    const labelFor = (key: string): string => {
+      if (!spec.matchRowsByPosition) return displayKey(key, spec);
+      const row = base.rows.get(key) ?? next.rows.get(key);
+      const text = row && Object.values(row)
+        .map((c) => (typeof c.value === 'string' ? c.value.trim() : ''))
+        .find((v) => v !== '');
+      // Long prose rows -- a disclaimer line -- would swamp the column.
+      const short = text && text.length > 40 ? `${text.slice(0, 39)}…` : text;
+      return short ? `${key} ${short}` : key;
+    };
+
     const canon = (h: string) => canonHeader(h, spec.looseHeaders);
     const ignoredCols = new Set(spec.ignoreColumns.map(canon));
+    const ignoredRow = rowKeyMatcher(spec.ignoreRows);
+    // The ledger builds its own rows rather than reading the diff, so it has to
+    // be told about metadata addresses too -- otherwise the one artefact that
+    // lists cells one per line goes on calling the report name a difference.
+    const metaCells = new Set(spec.metadataCells.map((a) => a.toUpperCase()));
+    const isMetadata = (c?: Cell) =>
+      metaCells.size > 0 && !!c?.address
+      && metaCells.has(c.address.replace(/\$/g, '').toUpperCase());
     const nextByCanon = new Map(next.headers.map((h) => [canon(h), h]));
     const baseByCanon = new Map(base.headers.map((h) => [canon(h), h]));
 
@@ -149,7 +190,7 @@ export function* ledgerRows(
     ): LedgerRow => ({
       sheet: t.sheet,
       table: t.table,
-      rowKey: displayKey(key, spec),
+      rowKey: labelFor(key),
       column,
       status,
       rootCause: cause(key, column),
@@ -171,7 +212,7 @@ export function* ledgerRows(
         for (const column of base.headers) yield row(key, column, 'row-removed', b[column]);
         continue;
       }
-      if (spec.ignoreRows.includes(key)) {
+      if (ignoredRow(key)) {
         for (const column of base.headers) {
           const nextName = nextByCanon.get(canon(column));
           const nc = nextName ? n[nextName] : undefined;
@@ -199,6 +240,16 @@ export function* ledgerRows(
         const bc = b[column];
         const nc = n[nextName];
         if (!bc || !nc) continue;
+
+        // Listed only in the full ledger. `differences.xlsx` is read as a list
+        // of defects, and a run-stamped report name sitting in it under
+        // "value-differs" is exactly the false alarm the metadata list exists
+        // to remove. It stays visible in compared.xlsx and in report.md.
+        if (isMetadata(bc) || isMetadata(nc)) {
+          if (scope === 'all') yield row(key, column, 'metadata', bc, nc);
+          continue;
+        }
+
         const tol = toleranceFor(spec, nextName);
         const status = statusOf(bc, nc, spec, tol);
         if (emit(status)) yield row(key, column, status, bc, nc, tol);
@@ -227,7 +278,7 @@ export function* ledgerRows(
 
 const text = (v: CellValue): string => {
   if (v === null || v === undefined) return '';
-  if (v instanceof Date) return v.toISOString();
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? '' : v.toISOString();
   if (typeof v === 'number') return String(num(v));
   return String(v);
 };
@@ -327,6 +378,7 @@ const STATUS_STYLE: Record<CellStatus, { font: string; fill: string }> = {
   'column-removed': { font: 'FF8A5A12', fill: 'FFFDF3DE' },
   'ignored-column': { font: MUTED, fill: 'FFF2F3F5' },
   'ignored-row': { font: MUTED, fill: 'FFF2F3F5' },
+  metadata: { font: MUTED, fill: 'FFF2F3F5' },
   match: { font: MUTED, fill: 'FFF2F3F5' },
 };
 
@@ -403,14 +455,31 @@ export async function writeLedgerWorkbook(
  * the differences ledger, which is short enough to carry them.
  */
 const COMPARED_COLUMNS: ColumnDef[] = [
-  { key: 'rowKey', header: 'Row key', width: 26 },
+  { key: 'rowKey', header: 'Row key', width: 34 },
   { key: 'column', header: 'Column', width: 22 },
   { key: 'baselineAddress', header: 'Golden cell', width: 12 },
   { key: 'actualAddress', header: 'Actual cell', width: 12 },
-  { key: 'baselineValue', header: 'Golden value', width: 22 },
-  { key: 'actualValue', header: 'Actual value', width: 22 },
+  { key: 'baselineValue', header: 'Golden value', width: 30 },
+  { key: 'actualValue', header: 'Actual value', width: 30 },
   { key: 'status', header: 'Status', width: 17 },
 ];
+
+/**
+ * What to put in a value column.
+ *
+ * A formula cell in a file the generator wrote holds no computed result, so
+ * the value is empty -- and an empty cell here is worse than useless, because
+ * it reads exactly like a cell that is genuinely blank. The formula is what
+ * that cell actually contains, so that is what gets shown.
+ *
+ * Prefixed rather than written as "=SUM(...)": a leading equals sign in a
+ * spreadsheet invites Excel to treat the text as a formula of its own, and the
+ * references in it mean nothing in this workbook.
+ */
+function displayValue(value: CellValue, formula: string | null): CellValue {
+  if (value !== null && value !== undefined && value !== '') return value;
+  return formula ? `fx ${formula}` : '';
+}
 
 /**
  * Every cell compared, one worksheet per compared table.
@@ -448,7 +517,11 @@ export async function writeComparedWorkbook(
       }
       const added = ws.addRow(
         COMPARED_COLUMNS.map((c) => {
-          const v = r[c.key];
+          const v = c.key === 'baselineValue'
+            ? displayValue(r.baselineValue, r.baselineFormula)
+            : c.key === 'actualValue'
+              ? displayValue(r.actualValue, r.actualFormula)
+              : r[c.key];
           return v === null || v === undefined ? '' : (v as string | number);
         }),
       );

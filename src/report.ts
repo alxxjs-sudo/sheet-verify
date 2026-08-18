@@ -9,12 +9,20 @@ export interface ReportOptions {
   showCascades?: boolean;
 }
 
-/** Trims binary-float artefacts so a delta reads as 179.8, not 179.79999999999995. */
-const num = (n: number): string => String(Number(n.toPrecision(12)));
+/**
+ * A number as text, at the precision it is stored.
+ *
+ * This used to trim to 12 significant digits, which read better -- until the
+ * comparison started reporting gaps below that. Trimming then printed the two
+ * sides of a difference as the same string, which is worse than ugly: it makes
+ * the report look wrong. JavaScript's default is the shortest text that reads
+ * back as the identical number, so nothing is invented and nothing is lost.
+ */
+const num = (n: number): string => String(n);
 
 const show = (v: CellValue): string => {
   if (v === null || v === undefined) return '∅';
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? '∅' : v.toISOString().slice(0, 10);
   if (typeof v === 'string') return JSON.stringify(v);
   if (typeof v === 'number') return num(v);
   return String(v);
@@ -101,6 +109,16 @@ export function formatReport(d: DiffResult, opts: ReportOptions = {}): string {
     for (const m of moved) out.push(`  ~ column "${m.column}" moved ${m.from} → ${m.to}`);
   }
 
+  const repeated = new Set([...d.rows.duplicateKeysBase, ...d.rows.duplicateKeysNext]);
+  if (repeated.size) {
+    h(`REPEATED ROW KEYS (${repeated.size}) — matched in order of appearance`);
+    out.push('  These rows do not have a key of their own — a per-group "Total" line, say.');
+    out.push('  The first in the baseline is compared with the first here, and so on, which');
+    out.push('  holds while the groups stay in the same order.');
+    for (const k of [...repeated].slice(0, limit)) out.push(`  ~ ${key(k) || '(blank)'}`);
+    out.push(...more(repeated.size));
+  }
+
   if (d.rows.added.length || d.rows.removed.length) {
     h('ROW POPULATION — review');
     if (d.rows.added.length) {
@@ -126,10 +144,12 @@ export function formatWorkbookReport(w: WorkbookDiffResult, opts: ReportOptions 
 
   const compared = w.sheets.filter((s) => s.status === 'compared');
   const failed = compared.filter((s) => !s.diff!.ok);
+  const positional = compared.filter((s) => s.reason);
   const counts = [
     // Tables, not sheets: a sheet holding an info block and a data table
     // contributes two.
     `${compared.length} table${compared.length === 1 ? '' : 's'} compared`,
+    positional.length ? `${positional.length} by position` : '',
     w.sheetSchema.added.length ? `${w.sheetSchema.added.length} added` : '',
     w.sheetSchema.removed.length ? `${w.sheetSchema.removed.length} removed` : '',
     w.sheets.filter((s) => s.status === 'skipped').length
@@ -164,6 +184,35 @@ export function formatWorkbookReport(w: WorkbookDiffResult, opts: ReportOptions 
         .map((l) => (l ? `  ${l}` : l))
         .join('\n'),
     );
+  }
+
+  if (positional.length) {
+    rule(`MATCHED BY POSITION (${positional.length}) — no row key on these tables`);
+    out.push('  Rows were paired by their order in the table, which is exact while both');
+    out.push('  sides hold the same rows. An inserted row shifts the rest, so one change');
+    out.push('  there reads as many.');
+    out.push('');
+    out.push('  To pin one down, pick the columns that identify a row and name them in');
+    out.push('  case.json. Each table\'s own columns are listed below -- the key has to');
+    out.push('  come from those, and it has to name the table, since a sheet holds more');
+    out.push('  than one.');
+
+    for (const s of positional) {
+      const n = s.diff!.rows.compared;
+      const cols = s.diff!.schema.compared;
+      out.push('');
+      out.push(`  ~ ${s.label} — ${n} row${n === 1 ? '' : 's'}`);
+      // The real column names, so what gets copied out of here actually
+      // resolves. An invented example is worse than none: it looks right,
+      // fails with "key column not found", and costs an hour.
+      const listed = cols.slice(0, 8).map((c) => JSON.stringify(c)).join(', ');
+      out.push(`      columns: ${listed}${cols.length > 8 ? `, … ${cols.length - 8} more` : ''}`);
+      if (s.table !== s.sheet) {
+        out.push(`      { "sheets": { ${JSON.stringify(s.sheet)}: { "tables": { ${JSON.stringify(s.table)}: { "keyColumns": [ … ] } } } } }`);
+      } else {
+        out.push(`      { "sheets": { ${JSON.stringify(s.sheet)}: { "keyColumns": [ … ] } } }`);
+      }
+    }
   }
 
   const review = w.sheets.filter(

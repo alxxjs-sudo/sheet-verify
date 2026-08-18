@@ -78,6 +78,39 @@ export interface SheetSpec {
    * Rows with a blank key are skipped.
    */
   keyColumns: string[];
+  /**
+   * Match rows by their position in the table rather than by a key. Set when
+   * `keyColumns` is empty, which is the only time it is allowed.
+   *
+   * A key is always better: it survives rows being added, removed or reordered,
+   * which is the whole reason this library exists. But plenty of real tables
+   * have nothing that identifies a row -- a breakdown by state and county
+   * carries subtotal rows with both blank -- and refusing to compare those at
+   * all leaves most of the workbook unchecked. When both sides hold the same
+   * number of rows, position identifies them exactly.
+   *
+   * The cost is that an inserted row shifts every row under it, so one change
+   * reads as many. The report says which tables were matched this way.
+   */
+  matchRowsByPosition?: boolean;
+  /**
+   * A blank part of a key inherits the value above it. Default false.
+   *
+   * Reports write a grouping column once, at the top of its group, and leave
+   * it blank on every row beneath -- a portfolio name over three hundred loss
+   * rows. Read literally that column is empty almost everywhere, so it adds
+   * nothing to a key, and the rows of one group collide with the rows of the
+   * next: on one real sheet, "Portfolio + Event ID" gave 485 distinct keys
+   * across 997 rows because the same events recur under every portfolio.
+   *
+   * Filling downward reads the sheet the way a person does -- this row is
+   * under that heading, so it belongs to it. It also gives a group's total
+   * row a key, since those carry the heading and nothing else.
+   *
+   * Only key building is affected. No cell value is invented, and nothing
+   * filled here is ever compared.
+   */
+  fillKeyDown?: boolean;
   /** Joins composite key parts. Default "␟" (unit separator). */
   keySeparator?: string;
   /**
@@ -94,6 +127,11 @@ export interface SheetSpec {
    * in their joined form.
    */
   ignoreRows?: string[];
+  /**
+   * Cell addresses on this sheet holding report metadata. Derived from the
+   * workbook-level `metadata` list, not written by hand -- see WorkbookSpec.
+   */
+  metadataCells?: string[];
   /** Compare formulas at all. Default true. */
   compareFormulas?: boolean;
   /** How formulas are normalised before comparison. Default 'header'. */
@@ -270,6 +308,18 @@ export type ResolvedSpec = Required<
 export type WorkbookSheetSpec = Omit<SheetSpec, 'sheet' | 'keyColumns'> & {
   keyColumns?: string[];
   /**
+   * This sheet is not in every report of this type, so its absence is normal.
+   *
+   * Configuring a sheet that neither file contains is otherwise an error, and
+   * deliberately so: it is almost always a misspelled name, and a misspelled
+   * name means the sheet you thought you had configured is quietly being
+   * compared without your settings. That check cannot tell a typo from a sheet
+   * that simply is not in this month's report, so say which you meant. Then the
+   * settings can live once at the report-type level and apply to the cases that
+   * do have the sheet.
+   */
+  optional?: boolean;
+  /**
    * Sheets holding more than one table -- an "output info" block above the
    * data is the common case. Each entry gets its own headers, key and
    * tolerances. Tables are bounded by the next one's `headerRow`, so no row
@@ -293,10 +343,102 @@ export interface WorkbookSpec {
   /** Sheets excluded entirely -- scratch tabs, lookup data, notes. */
   ignoreSheets?: string[];
   /**
+   * Report metadata: cells that identify the run rather than describe it --
+   * report name, report id, creation timestamp. The test is narrow: the value
+   * has to differ between any two runs *by construction*, the way a freshly
+   * minted id does. Comparing those reports a difference every time, and a
+   * finding that is always present is one nobody reads.
+   *
+   * Something that merely sounds like metadata does not qualify. A creator
+   * name is stable when the same account generates every report, so a change
+   * there means the wrong account ran it -- a finding, not noise.
+   *
+   * An entry is either a label, matched against a cell's text and taking the
+   * value beside it (`"Report ID"` covers `A1 "Report ID"` and `B1 4542`, and
+   * also a fused `="Report ID: " & id`), or a cell reference, `"Cover!A2"` for
+   * a bare date with no label of its own, or `"A2"` for the same cell on every
+   * sheet. Either form takes a sheet qualifier -- `"Report Info!Report ID"` --
+   * for a word that means run identity in a header block and a column heading
+   * somewhere else.
+   *
+   * Matched cells are read, listed in the report with both values, and left
+   * out of the verdict. Nothing downstream of them is chased either: a caption
+   * that reads the report name is metadata too.
+   *
+   * Do not put anything the figures depend on here either -- view of risk,
+   * currency, model version, the as-at date of the data. If one of those
+   * moves, the numbers under it should have moved too, and that is worth
+   * being told.
+   */
+  metadata?: string[];
+  /**
    * Treat added and unconfigured sheets as failures rather than review items.
    * Removed sheets are always failures. Default false.
    */
   strictSheets?: boolean;
+  /**
+   * Compare a table that has no row key by matching rows on position instead
+   * of leaving it unchecked. Default true.
+   *
+   * Detection never invents a key, and real reports are full of tables that
+   * have none -- a geography breakdown whose subtotal rows are blank in every
+   * identifying column, say. Left alone those tables are simply not compared,
+   * which on these reports meant most of the workbook going unchecked.
+   *
+   * Position is exact whenever both sides hold the same rows in the same
+   * order, and reads one inserted row as many changed ones when they do not.
+   * Every table matched this way is named in the report, so the weaker
+   * guarantee is never invisible. Set false to go back to not comparing them.
+   */
+  matchUnkeyedRowsByPosition?: boolean;
+
+  /**
+   * Which cases beneath this file to run, as paths relative to the folder the
+   * file sits in. Without it, everything runs.
+   *
+   *   { "cases": ["comparison_report/*", "!comparison_report/case_002"] }
+   *
+   * `*` stands for a run of characters within one path segment and `**` for
+   * any number of segments; a leading `!` excludes. Naming a folder selects
+   * everything under it, so `"comparison_report"` and `"comparison_report/**"`
+   * mean the same thing.
+   *
+   * Written in a meta.json, it says which cases that folder is for, so a run
+   * of the whole tree does what the tree says rather than what the command
+   * line remembers to ask for. Every file that carries one narrows further:
+   * a case has to be selected by all of them to run.
+   *
+   * A case left out is not a case that passed. The count of what was set aside
+   * is printed with the results, because a selection nobody notices is how a
+   * report quietly stops being checked.
+   */
+  cases?: string[];
+
+  /* --- labelling: says what a case is, changes nothing about the run ------ */
+
+  /**
+   * What this case is for, in the words of whoever wrote it: "a peril column
+   * added between two others". Titles the report and heads the case's block in
+   * the run log, so a failure names the scenario rather than a folder.
+   *
+   * Read from the case's own `case.json` and nowhere else. A label inherited
+   * from a folder above would describe every case beneath it identically,
+   * which is worse than having none -- the log would repeat one sentence
+   * thirty-nine times and say nothing.
+   */
+  label?: string;
+  /**
+   * The kind of report these cases compare: "Global Standard Cat Report".
+   * Inherited like any other setting, so it is written once beside the report
+   * type it names, and every case below carries it into the log and report.
+   */
+  reportType?: string;
+  /**
+   * Where the two files came from -- ids, download timestamps, hashes. Carried
+   * for provenance and never read by the comparison, so its shape is whatever
+   * the tool that fetched the pair chose to record.
+   */
+  source?: unknown;
 }
 
 export type SheetStatus =

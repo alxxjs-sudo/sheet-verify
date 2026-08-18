@@ -5,12 +5,25 @@ import { toHeaderRef, toR1C1 } from './a1.js';
 
 export const KEY_SEP = '␟';
 
+/**
+ * Marks the nth row sharing a key, e.g. "Total" then "Total ×2".
+ *
+ * Real reports repeat a key legitimately: a breakdown carries one "Total" row
+ * per group, and every one of them has the same blanks in the columns that
+ * identify a row. Dropping those rows -- which is what this used to do -- threw
+ * away the totals, the very lines most people read first. Numbering them
+ * instead pairs the nth "Total" in the baseline with the nth in the new report,
+ * which is right whenever the groups are in the same order.
+ */
+export const KEY_OCCURRENCE = ' ×';
+
 export function resolveSpec(spec: SheetSpec): ResolvedSpec {
-  if (!spec.keyColumns?.length) {
+  if (!spec.keyColumns?.length && !spec.matchRowsByPosition) {
     throw new Error(
       'sheet-verify: `keyColumns` is required. Row identity cannot be inferred; ' +
       'without it a diff degrades to positional comparison, which is the problem ' +
-      'this library exists to avoid.',
+      'this library exists to avoid. Set matchRowsByPosition to accept that ' +
+      'trade deliberately for a table that has no key.',
     );
   }
   const tol =
@@ -22,11 +35,14 @@ export function resolveSpec(spec: SheetSpec): ResolvedSpec {
     sheet: spec.sheet ?? 0,
     headerRow: spec.headerRow ?? 1,
     endRow: spec.endRow ?? 0,
-    keyColumns: spec.keyColumns,
+    keyColumns: spec.keyColumns ?? [],
+    matchRowsByPosition: spec.matchRowsByPosition ?? false,
+    fillKeyDown: spec.fillKeyDown ?? false,
     keySeparator: spec.keySeparator ?? KEY_SEP,
     tolerance: tol,
     ignoreColumns: spec.ignoreColumns ?? [],
     ignoreRows: spec.ignoreRows ?? [],
+    metadataCells: spec.metadataCells ?? [],
     compareFormulas: spec.compareFormulas ?? true,
     formulaMode: spec.formulaMode ?? 'header',
     requireCachedValues: spec.requireCachedValues ?? true,
@@ -46,6 +62,68 @@ export function resolveSpec(spec: SheetSpec): ResolvedSpec {
 export function canonHeader(name: string, loose: boolean): string {
   const t = name.trim();
   return loose ? t.toLowerCase().replace(/\s+/g, ' ') : t;
+}
+
+/**
+ * A row key reduced for `ignoreRows` matching. Trailing colons go too, since a
+ * key-value block writes "Report ID" or "Report ID:" interchangeably.
+ */
+export function canonRowKey(key: string): string {
+  return key.trim().toLowerCase().replace(/\s+/g, ' ').replace(/:$/, '');
+}
+
+/**
+ * A test for `ignoreRows`, matching the way `canonRowKey` normalises and
+ * allowing `*` to stand for a run of text.
+ *
+ * The wildcard exists because a metadata label folded in from `metadata` may
+ * carry one -- every report type spells its own name differently, and listing
+ * each spelling is how a config quietly stops covering the newest one.
+ */
+export function rowKeyMatcher(patterns: string[]): (key: string) => boolean {
+  const exact = new Set<string>();
+  const globs: RegExp[] = [];
+  for (const pattern of patterns) {
+    const p = canonRowKey(pattern);
+    if (!p.includes('*')) { exact.add(p); continue; }
+    const body = p
+      .split('*')
+      .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+      .join('.*?');
+    globs.push(new RegExp(`^${body}$`));
+  }
+  if (!globs.length) return (key) => exact.has(canonRowKey(key));
+  return (key) => {
+    const k = canonRowKey(key);
+    return exact.has(k) || globs.some((g) => g.test(k));
+  };
+}
+
+/**
+ * Whether two cell values are the same. Shared, deliberately: the comparer
+ * and the cell ledger are two views of one run, and a ledger that applies a
+ * stricter rule reports differences the report says do not exist.
+ */
+export function equalValues(a: CellValue, b: CellValue, tol: number): boolean {
+  if (a === null && b === null) return true;
+  if (a === null || b === null) return false;
+  if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
+  if (typeof a === 'number' && typeof b === 'number') {
+    if (Number.isNaN(a) && Number.isNaN(b)) return true;
+    // Only `tolerance` absorbs a gap, and it is zero unless someone set it.
+    //
+    // This used to carry slack of scale x 1e-12 as well, on the reasoning that
+    // Excel keeps 15 significant digits so a smaller gap is rounding from a
+    // different order of operations rather than a change. True as far as it
+    // goes, and the wrong trade: a cell whose stored values differ is a cell
+    // that differs, and deciding on the reader's behalf that they did not want
+    // to know leaves the report unable to show the full reach of a change.
+    // Judging which differences matter is the reader's job; `tolerance` is how
+    // they say so, per column, deliberately.
+    return Math.abs(a - b) <= tol;
+  }
+  if (typeof a === 'boolean' || typeof b === 'boolean') return a === b;
+  return String(a) === String(b);
 }
 
 export function toleranceFor(spec: ResolvedSpec, column: string): number {
@@ -96,6 +174,11 @@ export function buildModel(args: {
   const order: string[] = [];
   const dupes = new Set<string>();
   const uncached: string[] = [];
+  const occurrences = new Map<string, number>();
+  /** Last non-blank value seen in each key column. See `fillKeyDown`. */
+  const carried = new Map<string, string>();
+
+  let ordinal = 0;
 
   for (const r of args.rows) {
     const rec: Row = {};
@@ -107,18 +190,70 @@ export function buildModel(args: {
         : { address: '', kind: 'empty', value: null, formula: null, r1c1: null, headerRef: null };
     }
 
-    const parts = spec.keyColumns.map((k) => {
-      const c = rec[k];
-      return c && c.value !== null && c.value !== undefined ? String(c.value) : '';
-    });
-    if (parts.every((p) => p === '')) continue; // blank row
-    const key = parts.join(spec.keySeparator);
+    let key: string;
+    if (spec.matchRowsByPosition) {
+      // Counted from the top of the table rather than taken from the sheet row
+      // number, so a table that starts lower in one file still lines up. Blank
+      // rows take an ordinal too: skipping them would shift everything under
+      // them out of step with the other side, which is the one thing
+      // positional matching cannot survive.
+      key = `#${++ordinal}`;
+    } else {
+      const raw = spec.keyColumns.map((k) => {
+        const c = rec[k];
+        return c && c.value !== null && c.value !== undefined ? String(c.value).trim() : '';
+      });
 
-    if (rows.has(key)) dupes.add(key);
-    else { rows.set(key, rec); order.push(key); }
+      // A spacer row must not inherit the group above it -- it would take that
+      // group's key and collide with the row that legitimately holds it. Only
+      // a row with something in it is treated as belonging to the heading.
+      const empty = Object.values(rec).every(
+        (c) => c.value === null || c.value === undefined || String(c.value).trim() === '',
+      );
+      if (empty) continue;
+
+      const parts = spec.fillKeyDown
+        ? raw.map((p, i) => {
+            const column = spec.keyColumns[i]!;
+            if (p !== '') { carried.set(column, p); return p; }
+            return carried.get(column) ?? '';
+          })
+        : raw;
+
+      if (parts.every((p) => p === '')) continue; // nothing identifies this row
+      key = parts.join(spec.keySeparator);
+    }
+
+    // A repeated key is numbered rather than discarded, so the nth row bearing
+    // it lines up with the nth on the other side. See KEY_OCCURRENCE.
+    const n = (occurrences.get(key) ?? 0) + 1;
+    occurrences.set(key, n);
+    if (n > 1) dupes.add(key);
+    const unique = n === 1 ? key : `${key}${KEY_OCCURRENCE}${n}`;
+    rows.set(unique, rec);
+    order.push(unique);
   }
 
-  for (const k of dupes) rows.delete(k);
+  // Trailing blank rows are an artefact of the file, not of the report.
+  //
+  // Excel's used range outlives its contents: a sheet edited down to thirteen
+  // rows still reports thirty if something once occupied them, and the two
+  // files being compared have no reason to agree on that number. Under
+  // positional matching every one of those phantom rows takes an ordinal, so a
+  // disclaimer identical in both arrives as seventeen removed rows.
+  //
+  // Only the trailing run goes. A blank row *between* two populated ones is
+  // load-bearing: dropping it would shift everything beneath it out of step
+  // with the other side, which is the one thing positional matching cannot
+  // survive. Keyed tables never get here -- they discard blank rows outright,
+  // having no key to file them under.
+  if (spec.matchRowsByPosition) {
+    const blank = (key: string) =>
+      Object.values(rows.get(key) ?? {}).every(
+        (c) => c.value === null || c.value === undefined || String(c.value).trim() === '',
+      );
+    while (order.length && blank(order[order.length - 1]!)) rows.delete(order.pop()!);
+  }
 
   return {
     source, sheet, headers, headerIndex, rows,
@@ -143,13 +278,20 @@ function finalize(
 
   if (raw.formula) {
     if (value === null || value === undefined) uncached.push(raw.address);
+    // Excel strips whitespace around a formula when it saves, so a generator
+    // that wrote " IF(...)" comes back as "IF(...)" from any file a person has
+    // opened. Both compute the same thing, and reporting it as a calculation
+    // change would flag every such formula on every run. Only the ends are
+    // touched -- spacing inside the text can sit within a string literal,
+    // where it is part of the output.
+    const formula = raw.formula.trim();
     return {
       address: raw.address,
       kind: 'formula',
       value,
-      formula: raw.formula,
-      r1c1: toR1C1(raw.formula, rowNum, colNum),
-      headerRef: toHeaderRef(raw.formula, rowNum, colNum, headerByCol),
+      formula,
+      r1c1: toR1C1(formula, rowNum, colNum),
+      headerRef: toHeaderRef(formula, rowNum, colNum, headerByCol),
     };
   }
 

@@ -1,11 +1,24 @@
+# Installed, not authored
 node_modules/
+
+# Build output: `npm run build` regenerates all of it from src/
 dist/
-examples/out/
+*.tsbuildinfo
+
+# Test and example output, all written by a command that can be re-run
 tests/.fixtures/
 test-results/
 playwright-report/
-*.tsbuildinfo
+examples/out/
 examples/cases/
-report-comparison/
 examples/cli-cases/
-others/
+
+# Report data. Confidential: golden outputs, downloaded reports, and the
+# results of comparing them. Never commit these, and stage explicit paths
+# rather than `git add -A` so a future rule change cannot let them through.
+#
+# Both spellings are listed on purpose. A folder named with a hyphen once sat
+# beside the underscored one for an afternoon, uncovered by this file, with 130
+# report files visible to git the whole time.
+output_comparison/
+output-comparison/

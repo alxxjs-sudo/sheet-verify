@@ -2,7 +2,7 @@ import type {
   Cell, CellValue, DiffResult, FormulaDiff, InvariantFailure,
   MovedColumn, ResolvedSpec, SheetModel, TypeDiff, ValueDiff,
 } from './types.js';
-import { canonHeader, toleranceFor } from './model.js';
+import { canonHeader, equalValues, rowKeyMatcher, toleranceFor } from './model.js';
 import { dialectDrift } from './reader-csv.js';
 
 /** Same-row column dependencies, read off the header-resolved formula. */
@@ -15,17 +15,6 @@ function dependencies(cell: Cell): string[] {
   return out;
 }
 
-function equalValues(a: CellValue, b: CellValue, tol: number): boolean {
-  if (a === null && b === null) return true;
-  if (a === null || b === null) return false;
-  if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
-  if (typeof a === 'number' && typeof b === 'number') {
-    if (Number.isNaN(a) && Number.isNaN(b)) return true;
-    return Math.abs(a - b) <= tol;
-  }
-  if (typeof a === 'boolean' || typeof b === 'boolean') return a === b;
-  return String(a) === String(b);
-}
 
 function normalizedFormula(cell: Cell, mode: ResolvedSpec['formulaMode']): string | null {
   return mode === 'a1' ? cell.formula : mode === 'r1c1' ? cell.r1c1 : cell.headerRef;
@@ -50,12 +39,25 @@ function pairColumns(base: SheetModel, next: SheetModel, spec: ResolvedSpec) {
 export function compare(base: SheetModel, next: SheetModel, spec: ResolvedSpec): DiffResult {
   const errors: string[] = [];
 
+  // A repeated column name is disambiguated by position -- "Value" pairs with
+  // "Value", "Value (#2)" with "Value (#2)". That is sound whenever both files
+  // lay their columns out the same way, and real reports repeat column groups
+  // routinely: a currency block listing Name and Abbreviation a dozen times
+  // over is a normal shape, not a defect. It only becomes a guess when the two
+  // layouts disagree, because then the Nth "Value" need not be the same column.
+  const canon = (h: string) => canonHeader(h, spec.looseHeaders);
+  const sameLayout =
+    base.headers.length === next.headers.length &&
+    base.headers.every((h, i) => canon(h) === canon(next.headers[i] ?? ''));
+
   // --- structural trust checks -------------------------------------------
   for (const [label, m] of [['baseline', base], ['actual', next]] as const) {
-    if (m.duplicateHeaders.length)
-      errors.push(`${label}: duplicate header(s) ${m.duplicateHeaders.map((h) => `"${h}"`).join(', ')} — columns were disambiguated and may mismatch`);
-    if (m.duplicateKeys.length)
-      errors.push(`${label}: ${m.duplicateKeys.length} duplicate key(s) excluded from comparison, e.g. ${m.duplicateKeys.slice(0, 3).join(', ')}`);
+    if (m.duplicateHeaders.length && !sameLayout)
+      errors.push(`${label}: duplicate header(s) ${m.duplicateHeaders.map((h) => `"${h}"`).join(', ')} — the two files order their columns differently, so the repeated names could not be matched up reliably`);
+    // A repeated key used to mean those rows were dropped, which was worth
+    // failing over. They are now numbered and compared in order of appearance,
+    // so it is worth saying and not worth failing: a breakdown carries one
+    // "Total" row per group and every one of them has the same blank key.
     for (const k of spec.keyColumns)
       if (!m.headers.some((h) => canonHeader(h, spec.looseHeaders) === canonHeader(k, spec.looseHeaders)))
         errors.push(`${label}: key column "${k}" not found. Headers: ${m.headers.join(', ')}`);
@@ -90,13 +92,23 @@ export function compare(base: SheetModel, next: SheetModel, spec: ResolvedSpec):
   // ignoreRows drops rows by key, the row-wise counterpart of ignoreColumns.
   // A key-value block holds its per-run values in rows, so a timestamp there
   // cannot be excluded by column.
-  const ignoredRow = (k: string) => spec.ignoreRows.includes(k);
+  // Matched loosely, the way header names are: whether the sheet writes
+  // "Report ID", "Report Id " or "REPORT ID:" is a styling decision, and a
+  // config that has to guess which is a config that silently stops working.
+  const ignoredRow = rowKeyMatcher(spec.ignoreRows);
 
   const addedRows = next.order.filter((k) => !base.rows.has(k) && !ignoredRow(k));
   const removedRows = base.order.filter((k) => !next.rows.has(k) && !ignoredRow(k));
   const sharedRows = base.order.filter((k) => next.rows.has(k) && !ignoredRow(k));
 
   // --- layers 3 & 4: values, types, formulas ------------------------------
+  // Report metadata named by address. Compared to nothing, reported by layer 2
+  // instead, which lists it with both values under "not verified".
+  const metadataCells = new Set(spec.metadataCells.map((a) => a.toUpperCase()));
+  const isMetadata = (c: Cell | undefined) =>
+    metadataCells.size > 0 && !!c?.address
+    && metadataCells.has(c.address.replace(/\$/g, '').toUpperCase());
+
   const values: ValueDiff[] = [];
   const types: TypeDiff[] = [];
   const formulas: FormulaDiff[] = [];
@@ -111,6 +123,7 @@ export function compare(base: SheetModel, next: SheetModel, spec: ResolvedSpec):
       const bc = b[pair.base];
       const nc = n[pair.next];
       if (!bc || !nc) continue;
+      if (isMetadata(bc) || isMetadata(nc)) continue;
 
       let formulaChanged = false;
       if (spec.compareFormulas && (bc.formula || nc.formula)) {

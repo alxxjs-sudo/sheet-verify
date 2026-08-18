@@ -106,7 +106,7 @@ test.describe('verifyWorkbook', () => {
     expect(formatWorkbookReport(d)).toContain('no longer produced');
   });
 
-  test('a sheet with no key configured is reported as a coverage gap, not silently skipped', async () => {
+  test('a sheet with no key is compared by position, and the report says so', async () => {
     const base = await buildMultiSheet('wb-skip-base.xlsx');
     const next = await buildMultiSheet('wb-skip-next.xlsx');
 
@@ -115,10 +115,41 @@ test.describe('verifyWorkbook', () => {
     });
 
     expect(d.ok).toBe(true);
+    expect(statusOf(d.sheets, 'Regions')).toBe('compared');
+    // The weaker guarantee has to be visible, or it is worse than not
+    // comparing: a reader would take it for a keyed result.
+    expect(d.sheets.find((s) => s.sheet === 'Regions')!.reason).toContain('position');
+    expect(formatWorkbookReport(d)).toContain('MATCHED BY POSITION');
+    expect(formatWorkbookReport(d)).toContain('Regions');
+  });
+
+  test('and is left as a visible coverage gap when the fallback is turned off', async () => {
+    const base = await buildMultiSheet('wb-skip2-base.xlsx');
+    const next = await buildMultiSheet('wb-skip2-next.xlsx');
+
+    const d = await verifyWorkbook(base, next, {
+      matchUnkeyedRowsByPosition: false,
+      sheets: { Policies: { keyColumns: ['PolicyId'] }, Premiums: { keyColumns: ['PolicyId', 'Period'] } },
+    });
+
+    expect(d.ok).toBe(true);
     expect(d.reviewOnly).toBe(true);
     expect(statusOf(d.sheets, 'Regions')).toBe('skipped');
     expect(d.sheets.find((s) => s.sheet === 'Regions')!.reason).toContain('keyColumns');
-    expect(formatWorkbookReport(d)).toContain('Regions');
+  });
+
+  test('positional matching finds a changed cell that would otherwise go unchecked', async () => {
+    const base = await buildMultiSheet('wb-pos-base.xlsx');
+    const next = await buildMultiSheet('wb-pos-next.xlsx');
+
+    // Regions has no key, so before the fallback nothing on it was compared.
+    const d = await verifyWorkbook(base, next, {
+      sheets: { Policies: { keyColumns: ['PolicyId'] }, Premiums: { keyColumns: ['PolicyId', 'Period'] } },
+    });
+    const regions = d.sheets.find((s) => s.sheet === 'Regions')!;
+
+    expect(regions.diff!.rows.compared).toBeGreaterThan(0);
+    expect(regions.diff!.schema.compared.length).toBeGreaterThan(0);
   });
 
   test('strictSheets turns added and unconfigured sheets into failures', async () => {
@@ -339,11 +370,65 @@ test.describe('several tables on one sheet', () => {
     expect(second!.spec!.endRow).toBe(0);
   });
 
-  test('a table with no key is a coverage gap naming the table, not the sheet', async () => {
+  test('a sheet marked optional may be absent without failing the run', async () => {
+    const base = await buildMultiSheet('wb-opt-base.xlsx');
+    const next = await buildMultiSheet('wb-opt-next.xlsx');
+
+    // Some reports of a type carry an extra tab and some do not. The settings
+    // live once at the type level and apply to the cases that have it.
+    const d = await verifyWorkbook(base, next, {
+      sheets: {
+        Policies: { keyColumns: ['PolicyId'] },
+        Addendum: { optional: true, keyColumns: ['Item'] },
+      },
+    });
+
+    expect(d.errors).toEqual([]);
+    expect(d.ok).toBe(true);
+  });
+
+  test('but a misspelled sheet name is still an error, since it silently loses settings', async () => {
+    const base = await buildMultiSheet('wb-typo-base.xlsx');
+    const next = await buildMultiSheet('wb-typo-next.xlsx');
+
+    const d = await verifyWorkbook(base, next, {
+      sheets: {
+        Policies: { keyColumns: ['PolicyId'] },
+        Premiuns: { keyColumns: ['PolicyId', 'Period'] },
+      },
+    });
+
+    expect(d.errors.join(' ')).toContain('Premiuns');
+    expect(d.ok).toBe(false);
+  });
+
+  test('a table with no key is matched by position, named as the table not the sheet', async () => {
     const base = await buildTwoTableSheet('tt-nokey-base.xlsx');
     const next = await buildTwoTableSheet('tt-nokey-next.xlsx');
 
     const d = await verifyWorkbook(base, next, {
+      sheets: {
+        Policies: {
+          tables: {
+            Info: { headerRow: 1 },
+            Detail: { headerRow: 7, keyColumns: ['PolicyId'] },
+          },
+        },
+      },
+    });
+
+    const info = d.sheets.find((s) => s.table === 'Info')!;
+    expect(info.status).toBe('compared');
+    expect(info.reason).toContain('position');
+    expect(formatWorkbookReport(d)).toContain('Policies · Info');
+  });
+
+  test('and is a coverage gap naming the table when the fallback is off', async () => {
+    const base = await buildTwoTableSheet('tt-nokey2-base.xlsx');
+    const next = await buildTwoTableSheet('tt-nokey2-next.xlsx');
+
+    const d = await verifyWorkbook(base, next, {
+      matchUnkeyedRowsByPosition: false,
       sheets: {
         Policies: {
           tables: {

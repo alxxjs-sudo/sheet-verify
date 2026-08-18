@@ -192,3 +192,143 @@ export function toHeaderRef(
 function refToA1(r: ParsedRef): string {
   return `${r.colAbs ? '$' : ''}${numToCol(r.col)}${r.rowAbs ? '$' : ''}${r.row}`;
 }
+
+/**
+ * A rectangle of cells a formula reads. A single reference is 1x1. Ranges are
+ * kept as rectangles rather than expanded, so `A:A` costs nothing to record.
+ *
+ * `sheet` is null for a reference on the formula's own sheet. A quoted sheet
+ * name arrives with its quotes already stripped.
+ */
+export interface RefRect {
+  sheet: string | null;
+  fromRow: number;
+  toRow: number;
+  fromCol: number;
+  toCol: number;
+}
+
+/**
+ * Every cell a formula reads.
+ *
+ * This is what makes it possible to say "these cells will come out different
+ * once Excel recalculates" without evaluating anything: a formula's result can
+ * only move if its text changed or something it reads changed, so the read set
+ * plus the set of changed cells is enough to find everything downstream.
+ *
+ * Deliberately over-approximate. `IF(A1>0,B1,C1)` is recorded as reading all
+ * three even though only one branch is taken, because claiming a cell is
+ * unaffected when it might not be is the more expensive mistake.
+ */
+export function referencesOf(formula: string): RefRect[] {
+  const out: RefRect[] = [];
+  const n = formula.length;
+  let i = 0;
+  /** Sheet name carried by the reference currently being read. */
+  let sheet: string | null = null;
+  /** The left-hand side of a range, waiting for its ":" and right-hand side. */
+  let pending: { ref: ParsedRef; sheet: string | null } | null = null;
+
+  const push = (a: ParsedRef, b: ParsedRef, s: string | null) => {
+    out.push({
+      sheet: s,
+      fromRow: Math.min(a.row, b.row),
+      toRow: Math.max(a.row, b.row),
+      fromCol: Math.min(a.col, b.col),
+      toCol: Math.max(a.col, b.col),
+    });
+  };
+  /** Commits whatever is waiting as a single cell. */
+  const flush = () => {
+    if (pending) push(pending.ref, pending.ref, pending.sheet);
+    pending = null;
+  };
+
+  while (i < n) {
+    const c = formula[i]!;
+
+    if (c === '"') { // string literal
+      flush();
+      let j = i + 1;
+      while (j < n) {
+        if (formula[j] === '"') { if (formula[j + 1] === '"') j += 2; else { j++; break; } } else j++;
+      }
+      i = j;
+      continue;
+    }
+
+    if (c === "'") { // 'Sheet name'!
+      flush();
+      let j = i + 1;
+      while (j < n) {
+        if (formula[j] === "'") { if (formula[j + 1] === "'") j += 2; else { j++; break; } } else j++;
+      }
+      sheet = formula.slice(i + 1, j - 1).replace(/''/g, "'");
+      i = j;
+      if (formula[i] === '!') i++;
+      else sheet = null;
+      continue;
+    }
+
+    if (c === '#') { // #REF!, #N/A
+      flush();
+      const m = /^#[A-Za-z0-9\/!?]+/.exec(formula.slice(i));
+      if (m) { i += m[0].length; continue; }
+    }
+
+    if (c === ':' && pending) { // a range: read its right-hand side
+      i++;
+      // An unquoted sheet name may repeat on the right of the colon.
+      let j = i;
+      while (j < n && isIdentPart(formula[j]!)) j++;
+      let word = formula.slice(i, j);
+      let rightSheet = pending.sheet;
+      if (formula[j] === '!') {
+        rightSheet = word;
+        i = j + 1;
+        j = i;
+        while (j < n && isIdentPart(formula[j]!)) j++;
+        word = formula.slice(i, j);
+      }
+      const right = parseRef(word);
+      if (right) push(pending.ref, right, pending.sheet ?? rightSheet);
+      else flush();
+      pending = null;
+      i = j;
+      continue;
+    }
+
+    if (isIdentStart(c)) {
+      let j = i;
+      while (j < n && isIdentPart(formula[j]!)) j++;
+      const word = formula.slice(i, j);
+      const after = formula[j];
+
+      if (after === '[') { // Table1[Col] -- structured reference
+        flush();
+        let depth = 0, k = j;
+        while (k < n) {
+          if (formula[k] === '[') depth++;
+          else if (formula[k] === ']') { depth--; if (depth === 0) { k++; break; } }
+          k++;
+        }
+        i = k;
+        continue;
+      }
+      if (after === '!') { flush(); sheet = word; i = j + 1; continue; }
+      if (after === '(') { flush(); i = j; continue; } // function call
+
+      const ref = parseRef(word);
+      flush();
+      if (ref) pending = { ref, sheet };
+      sheet = null;
+      i = j;
+      continue;
+    }
+
+    if (c !== ' ') flush();
+    i++;
+  }
+  flush();
+  return out;
+}

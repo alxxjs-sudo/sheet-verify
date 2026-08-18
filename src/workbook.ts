@@ -5,9 +5,48 @@ import type {
 import { resolveSpec } from './model.js';
 import { compare } from './compare.js';
 import { readerFor } from './verify.js';
+import { metadataAddressesFor, parseMetadata } from './metadata.js';
 
 /** Excel forbids two sheets whose names differ only in case, so this is safe. */
 const canonSheet = (s: string): string => s.trim().toLowerCase();
+
+/**
+ * Folds `metadata` labels into `ignoreRows`, so layer 1 skips them too.
+ *
+ * A key-value block -- "Report ID" in column A, its value in column B -- is a
+ * table like any other once a header is found above it, and its labels are its
+ * row keys. Without this, layer 2 would list the report id as metadata while
+ * layer 1 reported it as a value change: the same cell, two verdicts.
+ *
+ * Address-form entries are left out. They name a cell, not a row, and a stray
+ * `"A2"` in a key column should not silently drop that row from comparison.
+ */
+function withMetadataRows(spec: WorkbookSpec): WorkbookSpec {
+  const { labels } = parseMetadata(spec.metadata);
+  if (!labels.length) return spec;
+
+  const defaults = spec.defaults ?? {};
+  const global = labels.filter((l) => !l.sheet).map((l) => l.label);
+  const out: WorkbookSpec = {
+    ...spec,
+    ...(global.length
+      ? { defaults: { ...defaults, ignoreRows: [...(defaults.ignoreRows ?? []), ...global] } }
+      : {}),
+  };
+
+  // A label confined to one sheet stays confined here too, or qualifying it
+  // would have bought nothing.
+  const confined = labels.filter((l) => l.sheet);
+  if (!confined.length) return out;
+
+  const sheets = { ...(out.sheets ?? {}) };
+  for (const { sheet, label } of confined) {
+    const found = Object.keys(sheets).find((k) => canonSheet(k) === sheet) ?? sheet;
+    const entry = sheets[found] ?? {};
+    sheets[found] = { ...entry, ignoreRows: [...(entry.ignoreRows ?? []), label] };
+  }
+  return { ...out, sheets };
+}
 
 function isWorkbookReader(r: unknown): r is WorkbookReader {
   return typeof (r as WorkbookReader).readWorkbook === 'function';
@@ -73,6 +112,20 @@ function mergeTables(
   return out;
 }
 
+/**
+ * A sheet's spec, with its metadata addresses attached.
+ *
+ * Every path that resolves a sheet goes through here, because an address rule
+ * that reaches layer 2 and not layer 1 puts the same cell in the report twice:
+ * once under "what changed" and once under "not verified".
+ */
+function sheetSpecFor(spec: WorkbookSpec, sheet: string): WorkbookSheetSpec {
+  const merged = mergeSheetSpec(spec.defaults, entryFor(spec.sheets, sheet));
+  const cells = metadataAddressesFor(spec.metadata, sheet);
+  if (!cells.length) return merged;
+  return { ...merged, metadataCells: [...(merged.metadataCells ?? []), ...cells] };
+}
+
 /** Looks a sheet's entry up case-insensitively. */
 function entryFor(
   sheets: WorkbookSpec['sheets'],
@@ -86,10 +139,20 @@ function entryFor(
   return undefined;
 }
 
+/**
+ * Whether a table with no key should be compared by row position rather than
+ * left unchecked. On by default: not comparing is the worse of the two, and
+ * the report names every table matched this way.
+ */
+const positionalFallback = (spec: WorkbookSpec) => spec.matchUnkeyedRowsByPosition ?? true;
+
 /** Resolves one sheet's spec, or null when it has no key and cannot be compared. */
 export function resolveSheetSpec(spec: WorkbookSpec, sheet: string): ResolvedSpec | null {
-  const merged = mergeSheetSpec(spec.defaults, entryFor(spec.sheets, sheet));
-  if (!merged.keyColumns?.length) return null;
+  const merged = sheetSpecFor(spec, sheet);
+  if (!merged.keyColumns?.length) {
+    if (!positionalFallback(spec)) return null;
+    return resolveSpec({ ...merged, keyColumns: [], matchRowsByPosition: true, sheet });
+  }
   return resolveSpec({ ...merged, keyColumns: merged.keyColumns, sheet });
 }
 
@@ -123,16 +186,19 @@ export interface ResolvedTable {
  * table named after itself.
  */
 export function resolveTables(spec: WorkbookSpec, sheet: string): ResolvedTable[] {
-  const merged = mergeSheetSpec(spec.defaults, entryFor(spec.sheets, sheet));
+  const merged = sheetSpecFor(spec, sheet);
   const declared = Object.entries(merged.tables ?? {});
 
   if (!declared.length) {
+    const resolved = resolveSheetSpec(spec, sheet);
     return [{
       table: sheet,
       key: tableKey(sheet, sheet),
       label: sheet,
-      spec: resolveSheetSpec(spec, sheet),
-      reason: merged.keyColumns?.length ? undefined : 'no keyColumns configured for this sheet',
+      spec: resolved,
+      reason: resolved
+        ? (resolved.matchRowsByPosition ? 'rows matched by position — no row key found' : undefined)
+        : 'no keyColumns configured for this sheet',
     }];
   }
 
@@ -148,6 +214,7 @@ export function resolveTables(spec: WorkbookSpec, sheet: string): ResolvedTable[
     // An explicit endRow wins; otherwise stop just above the next table.
     const endRow = entry.merged.endRow ?? (next ? (next.merged.headerRow ?? 1) - 1 : 0);
     const keyColumns = entry.merged.keyColumns;
+    const byPosition = !keyColumns?.length && positionalFallback(spec);
 
     return {
       table: entry.table,
@@ -155,15 +222,31 @@ export function resolveTables(spec: WorkbookSpec, sheet: string): ResolvedTable[
       label: labelFor(sheet, entry.table),
       spec: keyColumns?.length
         ? resolveSpec({ ...entry.merged, keyColumns, endRow, sheet })
-        : null,
-      reason: keyColumns?.length ? undefined : 'no keyColumns configured for this table',
+        : byPosition
+          ? resolveSpec({ ...entry.merged, keyColumns: [], matchRowsByPosition: true, endRow, sheet })
+          : null,
+      reason: keyColumns?.length
+        ? undefined
+        : byPosition
+          ? 'rows matched by position — no row key found'
+          : 'no keyColumns configured for this table',
     };
   });
 }
 
-/** Names in `spec.sheets` that match no sheet in either file -- almost always a typo. */
+/**
+ * Names in `spec.sheets` that match no sheet in either file -- almost always a
+ * typo, and worth stopping for, because a misspelled name means the sheet you
+ * meant to configure is quietly being compared without your settings.
+ *
+ * A sheet marked `optional` is exempt: some reports of a type carry an extra
+ * tab and some do not, and that is not a mistake. Marking it is what separates
+ * the two, since the absence looks identical either way.
+ */
 function strayEntries(spec: WorkbookSpec, present: Set<string>): string[] {
-  return Object.keys(spec.sheets ?? {}).filter((k) => !present.has(canonSheet(k)));
+  return Object.entries(spec.sheets ?? {})
+    .filter(([k, v]) => !present.has(canonSheet(k)) && !v?.optional)
+    .map(([k]) => k);
 }
 
 /**
@@ -208,8 +291,9 @@ export interface WorkbookRun {
 export async function runWorkbook(
   baselinePath: string,
   actualPath: string,
-  spec: WorkbookSpec,
+  rawSpec: WorkbookSpec,
 ): Promise<WorkbookRun> {
+  const spec = withMetadataRows(rawSpec);
   const ignored = new Set((spec.ignoreSheets ?? []).map(canonSheet));
   const compared: ComparedTable[] = [];
 
@@ -293,7 +377,9 @@ export async function runWorkbook(
       compared.push({
         label, sheet, table, base: baseModel, next: nextModel, spec: t.spec, diff,
       });
-      outcomes.push({ sheet, table, label, status: 'compared', diff });
+      // The reason carries through for a compared table too, so a table
+      // matched by position rather than by key says so in the report.
+      outcomes.push({ sheet, table, label, status: 'compared', diff, reason: t.reason });
     }
   }
 

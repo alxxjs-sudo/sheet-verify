@@ -144,11 +144,21 @@ test.describe('detectSpec', () => {
     await writeFile(path, 'Region,Band\nSofia,A\nSofia,A\nVarna,B\n', 'utf8');
 
     const spec = await detectSpec(path);
+    // The guarantee: no key is invented. A wrong key pairs rows arbitrarily
+    // and produces a confident wrong answer, which is worse than no answer.
     expect(spec.sheets!['CSV']!.keyColumns).toBeUndefined();
 
-    // The comparison then reports it as a visible coverage gap.
-    const outcome = (await import('../src/index.js')).resolveTables(spec, 'CSV')[0]!;
-    expect(outcome.spec).toBeNull();
-    expect(outcome.reason).toContain('keyColumns');
+    const { resolveTables } = await import('../src/index.js');
+
+    // The table is still compared, by row position, and says so.
+    const outcome = resolveTables(spec, 'CSV')[0]!;
+    expect(outcome.spec!.keyColumns).toEqual([]);
+    expect(outcome.spec!.matchRowsByPosition).toBe(true);
+    expect(outcome.reason).toContain('position');
+
+    // Turning the fallback off goes back to not comparing it at all.
+    const strict = resolveTables({ ...spec, matchUnkeyedRowsByPosition: false }, 'CSV')[0]!;
+    expect(strict.spec).toBeNull();
+    expect(strict.reason).toContain('keyColumns');
   });
 });

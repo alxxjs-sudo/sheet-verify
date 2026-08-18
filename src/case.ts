@@ -3,10 +3,12 @@ import { createWriteStream } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import type { WorkbookDiffResult, WorkbookSpec } from './types.js';
 import { runWorkbook } from './workbook.js';
-import { formatWorkbookReport, summarizeWorkbook, type ReportOptions } from './report.js';
+import { summarizeWorkbook, type ReportOptions } from './report.js';
+import { formatMarkdownReport } from './markdown.js';
 import {
   ledgerCsvLines, writeLedgerWorkbook, writeComparedWorkbook, type LedgerScope,
 } from './ledger.js';
+import { sweep, type SweepResult } from './sweep.js';
 import type { ComparedTable } from './workbook.js';
 
 /**
@@ -18,7 +20,7 @@ import type { ComparedTable } from './workbook.js';
  *   cases/monthly-policy-export/
  *     golden.xlsx        committed; the contract
  *     actual.xlsx        the latest run, copied in
- *     diff.txt           human-readable summary
+ *     report.md          everything the run found -- start here
  *     diff.json          the same, structured
  *     differences.xlsx   one row per differing cell
  *     compared.xlsx      every cell compared, one worksheet per table
@@ -31,7 +33,8 @@ import type { ComparedTable } from './workbook.js';
 export interface CaseFiles {
   golden: string;
   actual: string;
-  diffText: string;
+  /** The whole report, in Markdown. What changed and what went unchecked. */
+  report: string;
   diffJson: string;
   differences: string;
   compared: string;
@@ -54,6 +57,14 @@ export interface CaseOptions extends WorkbookSpec, ReportOptions {
    * Default true.
    */
   comparedLedger?: boolean;
+  /**
+   * Also run layer 2: sweep every cell of both files by address and report what
+   * differs outside layer 1's compared set. This is what turns "18 tables not
+   * compared" into a measured statement rather than an open question, so it is
+   * on by default. It costs a second parse of both files, and never changes the
+   * outcome -- `ok` is layer 1's verdict alone.
+   */
+  sweepCells?: boolean;
   /** Overwrite the golden output with the new report and pass. */
   updateGolden?: boolean;
   /** Create the golden output from the new report when absent. Default true. */
@@ -69,6 +80,8 @@ export interface CaseResult {
   files: CaseFiles;
   /** Null when the golden output was just created or re-blessed. */
   diff: WorkbookDiffResult | null;
+  /** Layer 2. Null when it did not run. Never affects `ok`. */
+  sweep: SweepResult | null;
   /** One-line verdict for logs and test titles. */
   summary: string;
   ok: boolean;
@@ -79,7 +92,7 @@ export interface CaseResult {
 const DEFAULTS: CaseFiles = {
   golden: 'golden.xlsx',
   actual: 'actual.xlsx',
-  diffText: 'diff.txt',
+  report: 'report.md',
   diffJson: 'diff.json',
   differences: 'differences.xlsx',
   compared: 'compared.xlsx',
@@ -153,7 +166,7 @@ export async function runCase(
   const files: CaseFiles = {
     golden: join(dir, names.golden),
     actual: join(dir, names.actual),
-    diffText: join(dir, names.diffText),
+    report: join(dir, names.report),
     diffJson: join(dir, names.diffJson),
     differences: join(dir, names.differences),
     compared: join(dir, names.compared),
@@ -173,7 +186,7 @@ export async function runCase(
   if (!hasGolden && (options.createMissingGolden ?? true)) {
     await copyFile(files.actual, files.golden);
     return {
-      dir, name, files, diff: null, blessed: true, ok: true,
+      dir, name, files, diff: null, sweep: null, blessed: true, ok: true,
       summary: `golden output created at ${files.golden} — commit it and review the contents`,
     };
   }
@@ -183,23 +196,35 @@ export async function runCase(
   if (options.updateGolden) {
     await copyFile(files.actual, files.golden);
     return {
-      dir, name, files, diff: null, blessed: true, ok: true,
+      dir, name, files, diff: null, sweep: null, blessed: true, ok: true,
       summary: `golden output re-blessed from ${basename(actualPath)}`,
     };
   }
 
   const { diff, compared } = await runWorkbook(files.golden, files.actual, options);
-  const report = formatWorkbookReport(diff, options);
+
+  // Layer 2 runs off the models layer 1 already built, so it costs a re-read of
+  // the two files and nothing more. Its verdict is deliberately not folded into
+  // `ok`: a positional sweep lights up whenever the layout moves, and letting
+  // that fail a run would undo the point of aligning by key in the first place.
+  const swept = (options.sweepCells ?? true)
+    ? await sweep(files.golden, files.actual, compared, {
+      ignoreSheets: options.ignoreSheets,
+      metadata: options.metadata,
+    })
+    : null;
 
   // A name may point into a subfolder -- the CLI keeps its output under
-  // result/ so it cannot be mistaken for one of the two inputs.
+  // results/ so it cannot be mistaken for one of the two inputs.
   const parents = new Set(
-    [files.diffText, files.diffJson, files.differences, files.compared].map((f) => dirname(f)),
+    [files.report, files.diffJson, files.differences, files.compared].map((f) => dirname(f)),
   );
   await Promise.all([...parents].map((d) => mkdir(d, { recursive: true })));
 
   await Promise.all([
-    writeFile(files.diffText, `${name}\n${'='.repeat(name.length)}\n\n${report}\n`, 'utf8'),
+    // Written even when nothing differed: "identical, and here is what was
+    // checked to say so" is the result, not the absence of one.
+    writeFile(files.report, formatMarkdownReport(diff, swept, { name, ...options }), 'utf8'),
     writeFile(files.diffJson, JSON.stringify(diff, null, 2), 'utf8'),
     writeLedger(files.differences, compared, options.cellLedger ?? 'differences'),
     (options.comparedLedger ?? true)
@@ -208,7 +233,7 @@ export async function runCase(
   ]);
 
   return {
-    dir, name, files, diff, blessed: false,
+    dir, name, files, diff, sweep: swept, blessed: false,
     ok: diff.ok,
     summary: summarizeWorkbook(diff),
   };

@@ -219,7 +219,7 @@ export const expect = baseExpect.extend({
       return { name, pass: true, message: () => `${name}: ${result.summary}` };
     }
 
-    const report = await readFile(result.files.diffText, 'utf8');
+    const report = await readFile(result.files.report, 'utf8');
     await attach('sheet-diff.txt', report);
     await attach('sheet-diff.json', JSON.stringify(result.diff, null, 2));
 
@@ -230,7 +230,7 @@ export const expect = baseExpect.extend({
       ([
         ['golden', result.files.golden],
         ['actual', result.files.actual],
-        ['diff', result.files.diffText],
+        ['report', result.files.report],
         ['json', result.files.diffJson],
         ['diffs', result.files.differences],
         ['cells', result.files.compared],

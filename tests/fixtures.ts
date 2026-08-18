@@ -184,6 +184,85 @@ export async function buildMultiSheet(
   return full;
 }
 
+export interface SweepBuildOptions {
+  /** Sum Insured drift, by policy id. Lands in a column layer 1 compares. */
+  sumDrift?: Record<string, number>;
+  /** Run stamp value, meant to be excluded with ignoreColumns. */
+  stamp?: string;
+  /** Value on the Notes sheet, which has no usable row key. */
+  note?: string;
+  /** Extends the Annual Cost formula. */
+  formulaDrift?: boolean;
+  /**
+   * Store cached results for the formulas. A report straight from the
+   * generator has none; one a person opened in Excel and saved has them.
+   */
+  cacheResults?: boolean;
+  /** Inserts a Premium column at position 3, shifting everything after it. */
+  insertColumn?: boolean;
+  /** Appends a sheet the other side does not have. */
+  extraSheet?: boolean;
+}
+
+/**
+ * A workbook built for the sweep: one sheet layer 1 can key, and one it cannot.
+ *
+ * Notes repeats its first column deliberately, so no key detects and layer 1
+ * reports the sheet as not compared. A change planted there is invisible to
+ * layer 1 by construction -- which is the case the sweep exists to catch.
+ *
+ * No formula carries a cached result, matching the real reports.
+ */
+export async function buildSweepWorkbook(
+  path: string,
+  opts: SweepBuildOptions = {},
+): Promise<string> {
+  await mkdir(DIR, { recursive: true });
+  const wb = new ExcelJS.Workbook();
+
+  const ws = wb.addWorksheet('Policies');
+  const headers = ['PolicyId', 'Holder'];
+  if (opts.insertColumn) headers.push('Premium');
+  headers.push('Sum Insured', 'Rate', 'Annual Cost', 'Run Stamp');
+  ws.addRow(headers);
+
+  const cSum = opts.insertColumn ? 'D' : 'C';
+  const cRate = opts.insertColumn ? 'E' : 'D';
+
+  POLICIES.forEach((p, i) => {
+    const n = i + 2;
+    const sum = opts.sumDrift?.[p.id] ?? p.sumInsured;
+    const values: any[] = [p.id, p.holder];
+    if (opts.insertColumn) values.push('Standard');
+    const formula = `${cSum}${n}*${cRate}${n}${opts.formulaDrift ? '*1.05' : ''}`;
+    const result = sum * p.rate * (opts.formulaDrift ? 1.05 : 1);
+    values.push(
+      sum,
+      p.rate,
+      opts.cacheResults ? { formula, result } : { formula },
+      opts.stamp ?? '2026-08-17T09:00:00Z',
+    );
+    ws.addRow(values);
+  });
+
+  const notes = wb.addWorksheet('Notes');
+  notes.addRow(['Appendix']);
+  notes.addRow(['Note', 'Value']);
+  notes.addRow(['Coverage', opts.note ?? 'Standard']);
+  notes.addRow(['Coverage', 'Standard']);
+  notes.addRow(['Coverage', 'Standard']);
+
+  if (opts.extraSheet) {
+    const extra = wb.addWorksheet('Addendum');
+    extra.addRow(['Item', 'Amount']);
+    extra.addRow(['Reinstatement', 5000]);
+  }
+
+  const full = join(DIR, path);
+  await wb.xlsx.writeFile(full);
+  return full;
+}
+
 /**
  * Rewrites a column's individual formulas into an Excel shared formula group:
  * the first cell holds the text, the rest reference it by index. ExcelJS
