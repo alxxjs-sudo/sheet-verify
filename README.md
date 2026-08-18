@@ -52,11 +52,16 @@ npm install exceljs csv-parse jszip
 Then either vendor `src/` into your test project, or build and depend on it:
 
 ```bash
-npm install && npm run build
+npm install        # builds dist/ on the way out, via the prepare script
 ```
 
+`dist/` is not committed — it is regenerated from `src/` — so `prepare` runs the
+build after any install, including a clone or a git install, and before publish.
+Nothing depending on this package can end up with entry points that are not
+there.
+
 Playwright transpiles TypeScript itself, so `src/` can be imported directly from
-test files with no build step. Only the direct-import path needs `npm run build`.
+test files with no build step. Only the direct-import path needs the build.
 
 ## Quick start
 
@@ -1027,7 +1032,7 @@ method that parses a file once and returns a model per requested table.
 
 ```bash
 npm install
-npm run build       # tsc -> dist/
+npm run build       # tsc -> dist/  (npm install does this for you)
 npm test            # 257 Playwright tests
 npm run typecheck
 npm run example     # run the six example cases
