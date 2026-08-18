@@ -23,7 +23,11 @@ were planted:
 
 - [Install](#install)
 - [Quick start](#quick-start) — two files in a folder, one command
+- [What you need to do to use it](#what-you-need-to-do-to-use-it) — the five things worth doing once
 - [The command](#the-command)
+  - [Two ways to name a pair](#two-ways-to-name-a-pair) — by file name, or by folder
+  - [Choosing which cases run](#choosing-which-cases-run)
+  - [Naming what a case is](#naming-what-a-case-is)
 - [Detection will not invent a row key](#detection-will-not-invent-a-row-key) — read this one
 - [How it works](#how-it-works)
 - [Cases](#cases) — the folder, the artefacts, re-blessing
@@ -62,10 +66,20 @@ sheets, header rows and row keys are worked out from the files themselves.
 **1. Make a folder and drop the two files in it:**
 
 ```
-report-comparison/
-  reports/global_standard_cat/case_001/
+output_comparison/
+  global_standard_cat_report/case_001/
     golden.xlsx      the output you trust
     actual.xlsx      the output under test
+```
+
+Or let each file keep the name it was downloaded under, and put the role in the
+folder instead — see [Two ways to name a pair](#two-ways-to-name-a-pair):
+
+```
+output_comparison/
+  global_standard_cat_report/case_001/
+    golden/case_1%1786955263151.xlsx
+    current/case_1%1786957329031.xlsx
 ```
 
 **2. Run it:**
@@ -75,20 +89,22 @@ npx sheet-verify
 ```
 
 ```
-✗ reports/global_standard_cat/case_001  1 sheet failing, 1 table to review
-    …/case_001/result/diff.txt
+✗ Global Standard Cat Report · case_001 · a peril column added mid-table
+    global_standard_cat_report/case_001
+    1 sheet failing, 1 table to review
+    …/case_001/results/report.md
 
 1 case, 1 failing
 ```
 
-**3. Read `result/`:**
+**3. Read `results/`:**
 
 ```
-report-comparison/reports/global_standard_cat/case_001/
+output_comparison/global_standard_cat_report/case_001/
   golden.xlsx
   actual.xlsx
-  result/
-    diff.txt            human-readable summary — start here
+  results/
+    report.md           everything the run found — start here
     diff.json           the same, structured, for scripts and CI
     differences.xlsx    one row per differing cell — absent when nothing differed
     compared.xlsx       every cell checked, a worksheet per table
@@ -100,10 +116,48 @@ straight into CI.
 That is the whole workflow. Everything below is for when the defaults are not
 quite right, or when you want this inside a test suite instead.
 
+## What you need to do to use it
+
+The tool detects the layout. What it cannot know is what your reports *are*, so
+these are the five things worth doing once, in the order they pay off.
+
+**1. Put your pairs in a tree.** One folder per report type, one folder per case
+under it. Names are free — every folder above a case is just grouping — and the
+tree can be as flat or as deep as suits you.
+
+**2. Run it and read the summary line, not just the ticks.** `10 tables
+compared` against a report you know holds twelve is the finding. A table with no
+row key is **not compared**, and that is reported rather than passed. See
+[Detection will not invent a row key](#detection-will-not-invent-a-row-key).
+
+**3. Name the keys detection could not find**, in a `meta.json` beside the
+report type. This is the only configuration most trees ever need:
+
+```json
+{ "sheets": { "Geography": { "tables": { "Table 2": { "keyColumns": ["Portfolio", "Geography Level"] } } } } }
+```
+
+**4. Name the cells that identify the run**, so they stop failing every run. A
+report id and a creation timestamp differ by construction; a creator name does
+not, if the same account generates every report. See [Report
+metadata](#report-metadata).
+
+```json
+{ "metadata": ["*Report Name", "Report ID", "Creation Date", "Cover!A3"] }
+```
+
+**5. Label each case**, one sentence saying what it is for. It titles the case's
+report and heads it in the run log, which is what turns a wall of `case_002`
+into something readable. See [Naming what a case is](#naming-what-a-case-is).
+
+Then the loop is: run it, read `results/report.md`, fix the report or
+[re-bless](#re-blessing-the-golden-output) the golden when the change was
+intended.
+
 ## The command
 
 ```bash
-npx sheet-verify                      # every case in ./report-comparison
+npx sheet-verify                      # every case in ./output_comparison
 npx sheet-verify path/to/case_007     # just one case
 npx sheet-verify --bless              # accept the differences as the new golden
 npx sheet-verify --print-spec         # show what was detected, as JSON
@@ -115,16 +169,15 @@ npx sheet-verify --help
 depth. Everything above a case is just grouping, so file them by kind:
 
 ```
-report-comparison/
+output_comparison/
   meta.json                          applies to every case below
-  reports/
-    global_standard_cat/
-      meta.json                      applies to this report type
-      case_001/  case_002/  …
-    pro_forma/
-      meta.json
-      case_001/
-        case.json                    only this case
+  global_standard_cat_report/
+    meta.json                        applies to this report type
+    case_001/  case_002/  …
+  pro-forma/
+    meta.json
+    case_001/
+      case.json                      only this case
   analyses/
     marginal/
       case_001/  case_002/  …
@@ -138,14 +191,18 @@ differs — an extra sheet or two — needs a file of its own.
 Cases are named by their path, since `case_001` will exist under every type:
 
 ```
-✗ reports/global_standard_cat/case_002  1 sheet failing
+✗ Global Standard Cat Report · case_002 · three columns inserted into Geocoding
+    global_standard_cat_report/case_002
+    1 sheet failing
 ```
 
 Targeting a subfolder runs only what is under it, but still applies the
-configuration above it — so `sheet-verify reports/pro_forma` gives the same
-verdicts for those cases as a full run.
+configuration above it — so `sheet-verify pro-forma` gives the same verdicts for
+those cases as a full run.
 
-**File names** are matched by prefix, so `golden.xlsx` / `actual.xlsx` is the
+### Two ways to name a pair
+
+**By file name.** Matched by prefix, so `golden.xlsx` / `actual.xlsx` is the
 convention but not the only option:
 
 | role | any of |
@@ -153,7 +210,93 @@ convention but not the only option:
 | the trusted output | `golden` · `baseline` · `expected` · `before` |
 | the output under test | `actual` · `new` · `current` · `after` · `report` |
 
+The prefix must end at a non-word character, so `golden-2026.xlsx` and
+`golden 2026.xlsx` are recognised and `golden_2026.xlsx` is not — an underscore
+is a word character.
+
+**By folder.** Put the role in the folder and each file keeps whatever name it
+arrived with, which is what a downloader produces when it preserves the source
+system's name — that name carries the download's timestamp, and renaming it to
+`golden.xlsx` throws that away:
+
+```
+case_001/
+  golden/case_1%1786955263151.xlsx      one spreadsheet, any name
+  current/case_1%1786957329031.xlsx     the folder says which side it is
+  results/
+```
+
+Folder names are the same words as the file prefixes. **Exactly one spreadsheet
+per folder** — two stops the run rather than one being picked, because with
+names like those a guess is a coin toss:
+
+```
+comparison_report/case_001: current/ holds 2 spreadsheets [rep_178699.csv, rep_178657.csv] — it must hold exactly one
+```
+
+A half-built case — `golden/` written and `current/` not yet — is reported and
+fails the run, rather than quietly dropping out of the count:
+
+```
+1 folder(s) meant to be cases could not be run:
+  validation_report/case_002: a golden/ folder is here with no current/ folder beside it
+
+5 cases, 5 failing, 1 could not be run
+```
+
 `.xlsx`, `.xlsm` and `.csv` all work, and both files must be the same kind.
+
+### Choosing which cases run
+
+A run can be narrowed from the command line by targeting a folder, or written
+down in any `meta.json` so a full run does what the tree says:
+
+```json
+{ "cases": ["comparison_report/**", "!comparison_report/case_002"] }
+```
+
+Paths are relative to the file that carries them, so the root can select by
+report type while a type selects its own cases. `*` stays within one path
+segment and `**` crosses them; naming a folder takes everything inside it; a
+leading `!` excludes. Every file carrying a list narrows further — a case has to
+be selected by all of them.
+
+What is left out is counted with the results, never dropped in silence:
+
+```
+2 cases, 2 failing — 4 not selected by "cases"
+```
+
+### Naming what a case is
+
+Two keys change nothing about the comparison and a great deal about reading it.
+`reportType` goes in a report type's `meta.json`; `label` goes in a case's
+`case.json` and is one sentence saying what that case is for:
+
+```json
+{ "label": "an extra Cat Model Version row shifts the whole perils block down" }
+```
+
+```
+✗ Validation Report · case_003 · an extra Cat Model Version row shifts the whole perils block down
+    validation_report/case_003
+    1 sheet failing
+```
+
+The label also titles that case's `report.md`, with the folder name kept
+underneath so the file is still findable from what it says:
+
+```markdown
+# an extra Cat Model Version row shifts the whole perils block down
+
+_Validation Report · case_003_
+```
+
+`reportType` is inherited like any other setting. **`label` deliberately is
+not** — one written a folder above would head every case beneath it with the
+same sentence and distinguish none of them. A label that merely repeats the
+folder name is treated as no label at all, so nothing reads `case_003 ·
+case_003` before you have written a real one.
 
 ### What gets detected
 
@@ -180,11 +323,12 @@ is never guessed at, because a wrong key is worse than no key: rows would be
 paired arbitrarily and the diff would be confident nonsense.
 
 The table is reported instead, so the gap is visible rather than silent. In
-`diff.txt`:
+`report.md`:
 
 ```
-SHEETS TO REVIEW
-  ? table "Summary" — no keyColumns configured for this table
+## Sheets to review
+
+- not compared: **Summary** — no keyColumns configured for this table
 ```
 
 and in the one-line summary as `1 sheet not compared`.
@@ -214,7 +358,7 @@ npm run build && npm run example:case-json
 `--print-spec` shows exactly what was worked out from your files:
 
 ```bash
-npx sheet-verify --print-spec > report-comparison/case_001/case.json
+npx sheet-verify --print-spec > output_comparison/comparison_report/case_001/case.json
 ```
 
 Edit that file and it is layered over the detection on the next run. Everything
@@ -234,7 +378,7 @@ there rather than copied into every case:
 
 | goes in | applies to |
 | --- | --- |
-| `report-comparison/meta.json` | every case — timestamps, run ids |
+| `output_comparison/meta.json` | every case — timestamps, run ids |
 | `reports/<type>/meta.json` | that report type — its keys, its decoration sheets |
 | `<case>/case.json` | one case — an extra sheet it happens to have |
 
@@ -271,7 +415,7 @@ report under test, and the artefacts describing what the comparison did. It can
 be reviewed, archived, or attached to a ticket as a unit.
 
 The CLI reads the two files straight out of the folder and writes its output to
-`result/`, so nothing it produces can be mistaken for one of the inputs.
+`results/`, so nothing it produces can be mistaken for one of the inputs.
 
 Used from code, the two files need not be in the folder to begin with — pass the
 new report from wherever your app wrote it and it is **copied in**, whatever the
@@ -284,7 +428,7 @@ import { runCase } from 'sheet-verify';
 const result = await runCase(actual, 'cases/monthly-policy-export', spec);
 if (!result.ok) {
   console.error(result.summary);
-  console.error(`details: ${result.files.diffText}`);
+  console.error(`details: ${result.files.report}`);
 }
 ```
 
@@ -302,25 +446,51 @@ Golden outputs are committed to git, so the change is reviewed in the pull
 request — which is the point. A silent baseline edit is how a defect becomes
 permanent.
 
-### diff.txt
-
-The read. Ordered so the most actionable thing is first: integrity problems,
-then removed sheets, then each failing table with its full detail, then
-everything merely worth reviewing collapsed to a line each.
+On a pair named [by folder](#two-ways-to-name-a-pair), blessing writes the new
+golden under **the name the new report arrived with** and removes the file it
+replaced, so the golden's name never claims a download it no longer holds:
 
 ```
-baseline  golden.xlsx   5 sheet(s)
-actual    actual.xlsx   6 sheet(s)
-          10 tables compared · 1 added
-
-SHEET "Premiums · Detail" — 1 value
-  VALUE CHANGES (1 root cause, 2 cascaded)
-    P-1003 / 2026-08 · Gross @C14: 6000 → 6900  (Δ 900)
-
-SHEETS TO REVIEW
-  ~ sheet "Policies · Detail" — 3 schema
-  + sheet "Premium Detail" — new, not compared
+✓ Comparison Report · case_001
+    golden replaced by rep_1786957329031.csv, and rep_1786955263151.csv removed
 ```
+
+### report.md
+
+The read, and the one file to start from. Ordered so the most actionable thing
+is first: what was verified, then integrity problems, then removed sheets, then
+each failing table in full, then what layer 1 could not reach, then everything
+merely worth reviewing.
+
+```markdown
+# geography rebuilt: 851 cells restated across the breakdown
+
+_Comparison Report · case_001_
+
+**Differences found.**
+
+| golden | `golden.xlsx` — 12 sheet(s) |
+| report | `actual.xlsx` — 12 sheet(s) |
+| tables compared | 24, 3 by row position |
+| cells differing | 894 |
+
+**Two-layer verification — both layers ran over every shared sheet.**
+
+- **Layer 1, by name and key** — 12,904 cells, across tables whose columns were
+  paired by header name and rows by the values that identify them.
+- **Layer 2, by address** — 15,117 cells, every one in both files compared A1
+  against A1 … 2,213 cells rest on this layer alone.
+
+## What changed
+
+### Geography · Table 2
+
+**Value changes (851)** — grouped by column, largest group first …
+```
+
+Sections that would otherwise run to walls of rows are grouped by column and
+folded behind a `Show` toggle; sheet-by-sheet blocks carry their own counts.
+Nothing is truncated — a terminal has a reason to elide, a file does not.
 
 ### diff.json
 
@@ -362,8 +532,8 @@ longer holds.
 
 Its absence is therefore not a pass. Some failures have no cells to point at —
 a removed sheet, a failed invariant, a duplicate key — and those appear in
-`diff.txt` and `diff.json` only. **The verdict is the exit code and `diff.txt`,
-never the presence of this file.**
+`report.md` and `diff.json` only. **The verdict is the exit code and
+`report.md`, never the presence of this file.**
 
 ### compared.xlsx
 
@@ -516,10 +686,52 @@ fallback. `ignoreColumns` excludes a column; `ignoreRows` excludes a row **by
 key** — the row-wise counterpart, for key-value blocks where the per-run value
 is a row and no column exclusion can reach it.
 
+### Report metadata
+
+Some cells identify the run rather than describe it. A report's name, its id and
+its creation timestamp are minted fresh every time, so comparing them produces a
+difference on every single run — which makes a clean run impossible and teaches
+whoever reads the report to skip the first section. Name them once, at the top
+of the spec:
+
+```json
+{
+  "metadata": [
+    "*Report Name",
+    "Report ID",
+    "Creation Date",
+    "Cover!A3"
+  ]
+}
+```
+
+**The test is whether the value differs _by construction_, not whether it
+sounds like metadata.** A generated id does. A creator name does not, if the
+same account generates every report — there it is expected to stay the same,
+and a change means the wrong account ran it. That is worth stopping on, so
+leave it out of this list. The same goes for anything the figures depend on:
+view of risk, currency, model version, the as-at date of the data. Those look
+like header furniture and are not — if one of them moved, the numbers
+underneath it should have moved too.
+
+An entry is a **label**, matched against a cell's text and taking the value
+beside it — `"Report ID"` covers `A1 "Report ID"` with `B1 4542`, and a fused
+`="Report ID: " & id` as well. Or it is a **cell reference**, `"Cover!A3"`, for
+a bare date with no label of its own. A `*` stands for a run of text, which is
+what lets one pattern cover `Facility Report Name`, `RiskPlay Report Name` and
+`Pro-Forma Report Name`. Either form takes a sheet qualifier —
+`"Report Info!Report ID"` — for a word that means run identity in a header
+block and a column heading somewhere else.
+
+Matching cells are skipped by **both** layers, and nothing downstream of them is
+chased either. They are not hidden: `report.md` lists every one under **Not
+verified, on purpose**, with both values, so an id that moved when you did not
+expect it is still there to be seen. It simply does not fail the run.
+
 ## Reading the output
 
-Start with the one-line summary, then `diff.txt`, then `differences.xlsx` if you need
-to work through individual cells.
+Start with the one-line summary, then `report.md`, then `differences.xlsx` if
+you need to work through individual cells.
 
 Three distinctions do most of the work:
 
@@ -530,9 +742,11 @@ a clean result. See [Detection will not invent a row
 key](#detection-will-not-invent-a-row-key).
 
 **Root cause vs cascade.** One wrong input feeding two formulas is reported as
-one cause and two consequences, not three failures. `diff.txt` shows the causes
-and counts the cascades; `differences.xlsx` marks each row `yes` or `no` in *Root
-cause*. Fix causes; consequences follow.
+one cause and two consequences, not three failures. Every difference is
+reported either way — a cascade is still a difference, and hiding it would
+understate the reach of the change — and both `report.md` and
+`differences.xlsx` mark each one `yes` or `no` in *Root cause*. Fix causes;
+consequences follow.
 
 **Defect vs review.** A defect fails the run. A review item — an inserted
 column, a new sheet, added rows — passes, but is reported so somebody looks.
@@ -602,7 +816,7 @@ import { expect } from 'sheet-verify/matcher';
 test('monthly policy export', async () => {
   const actual = await app.generateReport('2026-08');
 
-  await expect(actual).toMatchCase('report-comparison/case_001', {
+  await expect(actual).toMatchCase('output_comparison/comparison_report/case_001', {
     sheets: { Policies: { keyColumns: ['PolicyId'] } },
   });
 });
@@ -646,7 +860,7 @@ Both attach the diff to the test result as `sheet-diff.txt` and
 as a single sheet named `CSV`:
 
 ```ts
-await expect('out.csv').toMatchCase('report-comparison/case_002', {
+await expect('out.csv').toMatchCase('output_comparison/comparison_report/case_002', {
   sheets: { CSV: { keyColumns: ['PolicyId'] } },
   defaults: { csv: { strictDialect: true } },
 });
@@ -707,7 +921,20 @@ the template's own formulas read from, so the fragile parts are never touched.
 | `sheets` | `{}` | per-sheet spec, keyed by worksheet name |
 | `defaults` | `{}` | applied to every sheet, then overridden per sheet |
 | `ignoreSheets` | `[]` | worksheets excluded entirely |
+| `metadata` | `[]` | run identity — read, listed, never judged |
 | `strictSheets` | `false` | treat added and unconfigured sheets as failures |
+| `matchUnkeyedRowsByPosition` | `true` | compare a table with no key by row order instead of leaving it unchecked |
+
+**Tree options** — read from `meta.json` / `case.json` by the CLI, and ignored
+by the API, which is handed one case at a time:
+
+| option | scope | meaning |
+| --- | --- | --- |
+| `cases` | any `meta.json` | which cases beneath it run — globs, `!` excludes |
+| `reportType` | inherited | the kind of report, shown in the log and the report |
+| `label` | the case's own `case.json` only | one sentence saying what the case is for |
+| `source` | any | provenance, carried and never read |
+| `//…` | any | a note. JSON has no comments, so any key starting `//` is ignored |
 
 **Per-sheet options**, and the whole spec for a single-sheet comparison:
 
@@ -768,6 +995,22 @@ method that parses a file once and returns a model per requested table.
   is not implemented — nothing has needed it.
 - **Duplicate keys.** Rows with a repeated key are excluded and reported as an
   integrity error rather than guessed at.
+- **A misspelled key inside `sheets` is not caught.** The unknown-key check runs
+  at the top level of a config file — writing `keyColumns` where `sheets` was
+  meant is refused outright — but one level down, any field is accepted and
+  simply never read. `ignoreColumn` instead of `ignoreColumns` does nothing, and
+  says nothing. Check with `--print-spec`, which shows what the run will
+  actually use.
+- **`endRow` is Excel-only.** The CSV reader takes every row from `headerRow` to
+  the end of the file and does not consult it. On a `.csv` the setting is inert.
+- **Table numbers are positional.** `Table 2` means the second block detection
+  finds on that sheet, so a table named in config can shift if the file gains a
+  block above it. A run that suddenly reports `key column not found` on a table
+  that was fine is usually this — `--print-spec` shows the current numbering.
+- **Row numbers in config are literal.** `headerRow` and `endRow` are absolute,
+  so a case whose block sits one row lower than its siblings needs its own
+  `case.json`. Configuration written for a report type assumes every case of
+  that type has the same shape.
 - **Memory.** Around 600 MB of heap for 50k rows. Past ~100k rows use a streaming
   reader or the CSV path, and pair `cellLedger: 'all'` with a `.csv` ledger.
 - **Shared formulas.** Excel stores a filled-down formula once and points the
@@ -785,8 +1028,30 @@ method that parses a file once and returns a model per requested table.
 ```bash
 npm install
 npm run build       # tsc -> dist/
-npm test            # 135 Playwright tests
+npm test            # 257 Playwright tests
 npm run typecheck
 npm run example     # run the six example cases
 npm run compare     # the CLI, from source
+npm run clean       # delete every results/ folder under output_comparison
 ```
+
+`clean` is not needed for a correct comparison — a run overwrites its own
+artefacts. It is needed for an honest one: a case that stops failing leaves its
+old `differences.xlsx` behind, and a renamed or deleted case leaves a whole
+`results/` folder that still reads as current. Clearing first means everything
+present came from the run you just did.
+
+```bash
+npm run clean -- --dry                     # list what would go, delete nothing
+npm run clean -- output_comparison/validation_report
+```
+
+It only removes a folder named `results` that sits beside a golden — a golden
+file, or a `golden/` folder holding one — so the two inputs, any `case.json`,
+and any unrelated folder of that name are safe.
+
+**Run `clean` and `compare` as separate commands.** Chaining them has been seen
+to interleave on Windows, with the clean still deleting while the comparison
+writes: the run reports every case as finished and a good part of the tree ends
+up with no `results/` at all. The log looked perfect while doing it, which is
+the dangerous kind of wrong.
