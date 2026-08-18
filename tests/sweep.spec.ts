@@ -354,4 +354,91 @@ test.describe('runCase and layer 2', () => {
     // The report is still written; it simply carries no layer 2 sections.
     expect(await readFile(off.files.report, 'utf8')).not.toContain('nothing checked them');
   });
+
+  /**
+   * A tolerance is written against a column name and this layer works in
+   * addresses, so the two could easily disagree about which gaps matter -- and
+   * a layer 2 that ignored tolerances would go on reporting float noise in the
+   * headline count after the reader had said, in config, that they did not
+   * care about it.
+   */
+  test.describe('tolerance', () => {
+    /** A gap of 1e-7 on P-1003's 240000: the last bits of a double, as a
+     * recalculation in a different order leaves behind. */
+    const DRIFT = { 'P-1003': 240000.0000001 };
+
+    test('turned off, float noise is a difference like any other', async () => {
+      const golden = await buildSweepWorkbook('sw-tol-off-g.xlsx');
+      const actual = await buildSweepWorkbook('sw-tol-off-a.xlsx', { sumDrift: DRIFT });
+
+      const s = await sweepOf(golden, actual, {
+        ...SPEC,
+        defaults: { requireCachedValues: false, tolerance: 0 },
+      });
+
+      expect(s.totalDifferences).toBe(1);
+      expect(s.totalTolerated).toBe(0);
+    });
+
+    test('the default absorbs it without being asked', async () => {
+      const golden = await buildSweepWorkbook('sw-tol-default-g.xlsx');
+      const actual = await buildSweepWorkbook('sw-tol-default-a.xlsx', { sumDrift: DRIFT });
+
+      const s = await sweepOf(golden, actual);
+
+      expect(s.totalDifferences).toBe(0);
+      expect(s.totalTolerated).toBe(1);
+    });
+
+    test('a column tolerance from layer 1 quiets the same cell here', async () => {
+      const golden = await buildSweepWorkbook('sw-tol-col-g.xlsx');
+      const actual = await buildSweepWorkbook('sw-tol-col-a.xlsx', { sumDrift: DRIFT });
+
+      const s = await sweepOf(golden, actual, {
+        ...SPEC,
+        sheets: {
+          Policies: { keyColumns: ['PolicyId'], tolerance: { 'Sum Insured': 0.01 } },
+        },
+      });
+
+      // Not counted, but not hidden either: it is listed with its own gap.
+      expect(s.totalDifferences).toBe(0);
+      expect(s.totalTolerated).toBe(1);
+      expect(s.tolerated[0]?.address).toBe('C4');
+    });
+
+    test('the blanket tolerance covers cells layer 1 never reached', async () => {
+      const golden = await buildSweepWorkbook('sw-tol-gap-g.xlsx');
+      const actual = await buildSweepWorkbook('sw-tol-gap-a.xlsx', { sumDrift: DRIFT });
+
+      // Nothing is keyed, so layer 1 compares nothing and the drift is a gap.
+      const bare = { matchUnkeyedRowsByPosition: false, defaults: { requireCachedValues: false } };
+      const { compared } = await runWorkbook(golden, actual, bare);
+      expect(compared).toHaveLength(0);
+
+      const loose = await sweep(golden, actual, compared, { tolerance: 0.01 });
+      expect(loose.totalGaps).toBe(0);
+      expect(loose.totalTolerated).toBe(1);
+
+      // And the same run without it still reports the gap, so the tolerance is
+      // what changed the answer rather than the sweep losing sight of the cell.
+      const strict = await sweep(golden, actual, compared);
+      expect(strict.totalGaps).toBe(1);
+    });
+
+    test('a formula whose text changed is never tolerated', async () => {
+      const golden = await buildSweepWorkbook('sw-tol-formula-g.xlsx');
+      const actual = await buildSweepWorkbook('sw-tol-formula-a.xlsx', { formulaDrift: true });
+
+      const s = await sweepOf(golden, actual, {
+        ...SPEC,
+        defaults: { requireCachedValues: false, tolerance: 1e9 },
+        sheets: { Policies: { keyColumns: ['PolicyId'] } },
+      });
+
+      // However wide the tolerance, a changed calculation is a change.
+      expect(s.totalTolerated).toBe(0);
+      expect(s.totalDifferences).toBeGreaterThan(0);
+    });
+  });
 });

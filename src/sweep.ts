@@ -4,7 +4,7 @@ import { parse } from 'csv-parse/sync';
 import ExcelJS from 'exceljs';
 import { numToCol } from './a1.js';
 import { addressOf, impactOf, type FormulaCell } from './impact.js';
-import { canonHeader } from './model.js';
+import { canonHeader, toleranceFor } from './model.js';
 import { metadataOn, parseMetadata, type MetadataRules } from './metadata.js';
 import { openWorkbook } from './open-xlsx.js';
 import { CSV_SHEET } from './reader-csv.js';
@@ -89,6 +89,17 @@ export interface SweepCell {
   reason?: SweepReason;
   /** Set only when `status` is 'metadata': the pattern that excluded it. */
   rule?: string;
+  /**
+   * Set only on a tolerated cell: the tolerance it was judged against. Kept per
+   * cell because it is resolved per column, so one run can forgive a hundredth
+   * in one place and nothing at all in another.
+   */
+  tolerance?: number;
+  /**
+   * The compared table the cell falls in, named as reports name it. Absent for
+   * a cell outside every table layer 1 compared.
+   */
+  table?: string;
 }
 
 export interface SweptSheet {
@@ -100,6 +111,8 @@ export interface SweptSheet {
   differing: number;
   /** Differing cells nobody looked at. */
   gaps: number;
+  /** Numeric cells whose gap is inside the tolerance set for their column. */
+  tolerated: number;
   /** The two sides differ in extent, so positional drift is expected here. */
   reshaped: boolean;
 }
@@ -150,6 +163,14 @@ export interface SweepResult {
   metadata: SweepCell[];
   /** Metadata cells whose two sides differ -- expected, and not a finding. */
   metadataDiffering: number;
+  /**
+   * Cells whose two numbers differ by less than the tolerance set for their
+   * column. Kept out of `totalDifferences`, and listed in full: a tolerance is
+   * a statement that a gap that size does not matter, not a reason to stop
+   * showing it.
+   */
+  tolerated: SweepCell[];
+  totalTolerated: number;
 }
 
 export interface SweepOptions {
@@ -171,6 +192,17 @@ export interface SweepOptions {
    * read, listed, and left out of the verdict.
    */
   metadata?: string[];
+  /**
+   * Tolerance for cells this sweep reaches but layer 1 did not: title blocks,
+   * unkeyed tables, anywhere outside a compared table's rows. Per-column
+   * tolerances come from the compared tables themselves, so this is the `*`
+   * fallback and nothing else.
+   *
+   * Without it a tolerance would only ever quiet layer 1, and the headline
+   * count -- which comes from here -- would go on reporting float noise the
+   * reader has already said they do not care about.
+   */
+  tolerance?: number;
 }
 
 const DEFAULT_LIMIT = Number.MAX_SAFE_INTEGER;
@@ -380,6 +412,85 @@ const columnAt = (
 ): string | undefined =>
   bands.get(canon(sheet))?.find((b) => row >= b.from && row <= b.to)?.byCol.get(col);
 
+/** A compared table's tolerances, laid out by the cells they cover. */
+interface ToleranceBand {
+  /** How the table is named in reports: "Portfolio Totals · Table 3". */
+  label: string;
+  from: number;
+  to: number;
+  /** Per column number, resolved from the column's own name. */
+  byCol: Map<number, number>;
+  /** The table's `*` entry, for a column inside its rows but not in its headers. */
+  star: number;
+}
+
+/**
+ * Where each tolerance applies, read off the tables layer 1 compared. The
+ * sweep works in addresses and a tolerance is written against a column name,
+ * so the translation has to happen somewhere; doing it here keeps the two
+ * layers agreeing about which gaps matter.
+ */
+function toleranceBandsOf(compared: ComparedTable[]): Map<string, ToleranceBand[]> {
+  const out = new Map<string, ToleranceBand[]>();
+  for (const t of compared) {
+    const star = t.spec.tolerance['*'] ?? 0;
+    const byCol = new Map<number, number>();
+    for (const model of [t.base, t.next]) {
+      for (const [name, col] of model.headerIndex) {
+        if (byCol.has(col)) continue;
+        byCol.set(col, toleranceFor(t.spec, name));
+      }
+    }
+    if (!byCol.size && star === 0) continue;
+    const key = canon(t.sheet);
+    const bands = out.get(key) ?? [];
+    bands.push({
+      label: t.label,
+      from: t.spec.headerRow,
+      to: t.spec.endRow > 0 ? t.spec.endRow : Number.MAX_SAFE_INTEGER,
+      byCol,
+      star,
+    });
+    out.set(key, bands);
+  }
+  return out;
+}
+
+const bandAt = (
+  bands: Map<string, ToleranceBand[]>,
+  sheet: string,
+  row: number,
+): ToleranceBand | undefined =>
+  bands.get(canon(sheet))?.find((b) => row >= b.from && row <= b.to);
+
+const toleranceIn = (band: ToleranceBand | undefined, fallback: number, col: number): number =>
+  band ? band.byCol.get(col) ?? band.star : fallback;
+
+/**
+ * Whether two cells hold numbers that differ by no more than `tol`.
+ *
+ * This layer works in the text a cell displays -- it never sees the cell's
+ * type -- so "a number" here means text that reads as one on both sides. A
+ * version written "4.20" would qualify, which is the argument for setting a
+ * tolerance to the size of the rounding it is meant to absorb rather than to
+ * whatever round figure feels comfortable. Layer 1 has the types and does not
+ * share this weakness; the two agree on every cell layer 1 reached.
+ *
+ * A formula whose text changed is a change whatever its result says, so those
+ * are never tolerated.
+ */
+function withinTolerance(a: string, b: string, tol: number): boolean {
+  if (tol <= 0) return false;
+  if (isFormula(a) !== isFormula(b)) return false;
+  if (isFormula(a) && isFormula(b) && parts(a).formula !== parts(b).formula) return false;
+
+  const x = Number(textOf(a));
+  const y = Number(textOf(b));
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  if (textOf(a).trim() === '' || textOf(b).trim() === '') return false;
+  return Math.abs(x - y) <= tol;
+}
+
 function coverageOf(compared: ComparedTable[]): Map<string, Coverage> {
   const out = new Map<string, Coverage>();
 
@@ -512,6 +623,8 @@ export async function sweep(
   const rules: MetadataRules = parseMetadata(options.metadata);
   const [baseGrids, nextGrids] = await Promise.all([sweepFile(basePath), sweepFile(nextPath)]);
   const coverage = coverageOf(compared);
+  const tolerances = toleranceBandsOf(compared);
+  const fallbackTolerance = options.tolerance ?? 0;
 
   const baseByCanon = new Map([...baseGrids.keys()].map((s) => [canon(s), s]));
   const nextByCanon = new Map([...nextGrids.keys()].map((s) => [canon(s), s]));
@@ -519,7 +632,9 @@ export async function sweep(
   const sheets: SweptSheet[] = [];
   const differences: SweepCell[] = [];
   const metadata: SweepCell[] = [];
+  const toleratedCells: SweepCell[] = [];
   let metadataDiffering = 0;
+  let totalTolerated = 0;
   let cellsSwept = 0;
   let cellsCompared = 0;
   let totalDifferences = 0;
@@ -551,6 +666,7 @@ export async function sweep(
         compared: 0,
         differing: 0,
         gaps: 0,
+        tolerated: 0,
         reshaped: false,
       });
       continue;
@@ -563,6 +679,7 @@ export async function sweep(
     let differing = 0;
     let gaps = 0;
     let compared = 0;
+    let tolerated = 0;
 
     for (const address of addresses) {
       const b = base.cells.get(address) ?? '';
@@ -591,6 +708,24 @@ export async function sweep(
 
       if (same(b, n)) continue;
 
+      // A gap the reader has already said does not matter. Counted and listed
+      // on its own rather than folded into the differences, so a tolerance
+      // quiets the report without quietly editing what the run found.
+      const band = bandAt(tolerances, sheet, row);
+      const tol = toleranceIn(band, fallbackTolerance, column);
+      if (withinTolerance(b, n, tol)) {
+        tolerated++;
+        if (toleratedCells.length < limit) {
+          toleratedCells.push({
+            ...record(),
+            tolerance: tol,
+            // Named so the report can say which table absorbed the drift.
+            ...(band ? { table: band.label } : {}),
+          });
+        }
+        continue;
+      }
+
       differing++;
       if (status === 'gap') gaps++;
       else if (status === 'reported') totalReported++;
@@ -603,6 +738,7 @@ export async function sweep(
     cellsCompared += compared;
     totalDifferences += differing;
     totalGaps += gaps;
+    totalTolerated += tolerated;
 
     sheets.push({
       sheet,
@@ -611,6 +747,7 @@ export async function sweep(
       compared,
       differing,
       gaps,
+      tolerated,
       reshaped: base.rows !== next.rows || base.columns !== next.columns,
     });
   }
@@ -671,6 +808,8 @@ export async function sweep(
       (a, b) => a.sheet.localeCompare(b.sheet) || a.row - b.row || a.column - b.column,
     ),
     metadataDiffering,
+    tolerated: toleratedCells,
+    totalTolerated,
     affected: affected.slice(0, limit),
     totalAffected: impact.affected.length,
     inertChanges: impact.inert,
@@ -829,9 +968,13 @@ export function summarizeSweep(s: SweepResult): string {
   // movement is the report id is a clean run, and saying otherwise is what
   // teaches someone to stop reading the first line.
   const meta = s.metadataDiffering > 0 ? `, ${s.metadataDiffering} metadata` : '';
-  if (s.totalDifferences === 0) return `every cell identical${meta}`;
+  // Same reasoning for tolerated cells: they moved, the reader has said a move
+  // that size is immaterial, and reporting them as differences would make the
+  // one line people read overstate what happened.
+  const tol = s.totalTolerated > 0 ? `, ${s.totalTolerated} within tolerance` : '';
+  if (s.totalDifferences === 0) return `every cell identical${tol}${meta}`;
   if (s.totalGaps === 0) {
-    return `${s.totalDifferences} differing, all accounted for by layer 1${meta}`;
+    return `${s.totalDifferences} differing, all accounted for by layer 1${tol}${meta}`;
   }
-  return `${s.totalGaps} differing cell(s) nobody checked (of ${s.totalDifferences})${meta}`;
+  return `${s.totalGaps} differing cell(s) nobody checked (of ${s.totalDifferences})${tol}${meta}`;
 }

@@ -9,6 +9,7 @@ import {
   ledgerCsvLines, writeLedgerWorkbook, writeComparedWorkbook, type LedgerScope,
 } from './ledger.js';
 import { sweep, type SweepResult } from './sweep.js';
+import { DEFAULT_TOLERANCE } from './model.js';
 import type { ComparedTable } from './workbook.js';
 
 /**
@@ -151,6 +152,17 @@ async function writeLedger(
 }
 
 /**
+ * The `*` tolerance from a workbook's defaults, whatever form it was written
+ * in. A number means every column; a record names them, and `*` is its
+ * fallback. Anything narrower than `*` belongs to a column, and a cell outside
+ * every compared table has no column to be judged by.
+ */
+function blanketTolerance(tolerance: number | Record<string, number> | undefined): number {
+  if (typeof tolerance === 'number') return tolerance;
+  return tolerance?.['*'] ?? DEFAULT_TOLERANCE;
+}
+
+/**
  * Runs one case: copies the new report into the case folder, compares it
  * against the golden output, and writes the diff artefacts beside them.
  *
@@ -211,6 +223,11 @@ export async function runCase(
     ? await sweep(files.golden, files.actual, compared, {
       ignoreSheets: options.ignoreSheets,
       metadata: options.metadata,
+      // Per-column tolerances travel with the tables layer 1 compared. This is
+      // the blanket one, for the cells layer 1 never reached -- without it a
+      // tolerance would quiet the keyed comparison and leave the same float
+      // noise in the headline count, which is where most people look first.
+      tolerance: blanketTolerance(options.defaults?.tolerance),
     })
     : null;
 

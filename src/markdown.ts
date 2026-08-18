@@ -46,6 +46,101 @@ const n = (v: number): string => v.toLocaleString('en-US');
 
 const BLANK = '_(blank)_';
 
+/**
+ * What differs, as its own table.
+ *
+ * One number cannot carry this. "894" reads as a disaster when 870 of those
+ * moved by less than a thousandth; "24" alone hides that the file is full of
+ * recalculation drift. Three columns and a share, with the tolerance that drew
+ * the line named on the column that used it -- so the figure everyone acts on
+ * can be read without scrolling and without arithmetic.
+ */
+function cellCounts(s: SweepResult): string[] {
+  const above = s.totalDifferences;
+  const total = above + s.totalTolerated;
+
+  const share = total === 0 ? 0 : (above / total) * 100;
+  const pct = above === 0 ? '0%'
+    : share >= 99.95 ? '100%'
+      : share < 0.1 ? '<0.1%'
+        : `${share.toFixed(1)}%`;
+
+  // The tolerance is resolved per column, so a run can apply several. One value
+  // is named outright; a spread is given as a range, since claiming a single
+  // number would be false.
+  const applied = [...new Set(s.tolerated.map((c) => c.tolerance ?? 0))].sort((a, b) => a - b);
+  const band = applied.length === 0 ? ''
+    : applied.length === 1 ? ` (±${num(applied[0]!)})`
+      : ` (±${num(applied[0]!)}–${num(applied[applied.length - 1]!)})`;
+
+  return [
+    '',
+    '**Cells that differ**',
+    '',
+    `| total | within tolerance${band} | above tolerance |`,
+    '| ---: | ---: | ---: |',
+    `| ${n(total)} | ${n(s.totalTolerated)} | **${n(above)} (${pct})** |`,
+  ];
+}
+
+/**
+ * The same three counts for one table, above its findings.
+ *
+ * "Value changes (3)" reads very differently depending on whether the other
+ * four hundred cells held still or drifted a hair each. The counts are the
+ * table's own: what layer 1 reported here, and what the tolerance absorbed
+ * here -- so they agree with the lists directly underneath.
+ *
+ * Emitted under every changed table. Where the tolerance forgave nothing the
+ * row reads "3 of 3, 100% above", which is the point: a reader comparing two
+ * tables should not have to work out whether a missing block means no drift or
+ * no data.
+ */
+function tableCounts(o: SheetOutcome, s: SweepResult): string[] {
+  const within = s.tolerated.filter((c) => c.table === o.label);
+
+  const d = o.diff!;
+  // One exception to "under every table": a comparison that never ran. A table
+  // whose key column was not found has no rows compared, and a row of zeros
+  // there would say its cells were checked and matched -- the opposite of what
+  // the integrity error underneath is about to say.
+  if (d.rows.compared === 0 && within.length === 0) return [];
+
+  const above = d.values.length + d.formulas.length + d.types.length;
+  const total = above + within.length;
+  const share = total === 0 ? 0 : (above / total) * 100;
+  const pct = above === 0 ? '0%'
+    : share >= 99.95 ? '100%'
+      : share < 0.1 ? '<0.1%'
+        : `${share.toFixed(1)}%`;
+
+  // The tolerance is named from the cells it actually forgave. With none to
+  // read it from, the column says what it counts and claims no number --
+  // guessing one from config would name a tolerance that never applied here.
+  const applied = [...new Set(within.map((c) => c.tolerance ?? 0))].sort((a, b) => a - b);
+  const band = applied.length === 0 ? ''
+    : applied.length === 1
+      ? ` (±${num(applied[0]!)})`
+      : ` (±${num(applied[0]!)}–${num(applied[applied.length - 1]!)})`;
+
+  return [
+    '',
+    `| total | within tolerance${band} | above tolerance |`,
+    '| ---: | ---: | ---: |',
+    `| ${n(total)} | ${n(within.length)} | **${n(above)} (${pct})** |`,
+  ];
+}
+
+/**
+ * The size of a tolerated gap, for the reader to judge the tolerance by. Both
+ * sides parsed as numbers to get here, so this only has to render one.
+ */
+function gapBetween(base: string, next: string): string {
+  const a = Number(base);
+  const b = Number(next);
+  return Number.isFinite(a) && Number.isFinite(b) ? num(Math.abs(a - b)) : '';
+}
+
 const show = (v: CellValue): string => {
   if (v === null || v === undefined) return BLANK;
   if (v instanceof Date) return Number.isNaN(v.getTime()) ? BLANK : v.toISOString().slice(0, 10);
@@ -263,6 +358,14 @@ function assurance(s: SweepResult): string[] {
     `Read but not judged: ${meta}any sheet excluded on purpose. Both are listed at`,
     'the end of this report with their values, so nothing is set aside out of sight.',
   );
+  if (s.totalTolerated > 0) {
+    out.push(
+      '',
+      `Both layers apply the tolerances configured for a column: ${n(s.totalTolerated)} cells`,
+      'differ by less than the one set for theirs, and are listed on their own rather',
+      'than counted as differences.',
+    );
+  }
   return out;
 }
 /**
@@ -382,10 +485,11 @@ export function formatMarkdownReport(
     ['report', `${code(diff.next.source)} — ${diff.next.sheets.length} sheet(s)`],
     ['tables compared', `${compared.length}${positional.length ? `, ${positional.length} by row position` : ''}`],
     ...(skipped.length ? [['tables not compared', String(skipped.length)]] : []),
-    ...(swept ? [
-      ['cells differing', n(swept.totalDifferences)],
-    ] : []),
   ]));
+
+  // The count of what differs is the reason anyone opened the file, so it gets
+  // a table of its own rather than a row in the middle of the file paths.
+  if (swept) out.push(...cellCounts(swept));
 
   if (swept) out.push(...assurance(swept));
 
@@ -404,6 +508,10 @@ export function formatMarkdownReport(
     out.push('', '## What changed', '');
     for (const s of failed) {
       out.push('', `### ${cell(s.label)}`);
+      // Every changed table gets one, whether or not the tolerance forgave
+      // anything here: the same three columns in the same place under every
+      // heading is what makes them comparable at a glance.
+      if (swept) out.push(...tableCounts(s, swept));
       out.push(...findings(s, sep));
     }
   }
@@ -500,6 +608,37 @@ export function formatMarkdownReport(
         ]),
       ));
     }
+  }
+
+  if (swept && swept.totalTolerated > 0) {
+    out.push('', `## Inside the tolerance you set (${n(swept.totalTolerated)})`, '');
+    out.push('These cells hold different numbers, by less than the tolerance configured');
+    out.push('for their column. They are not counted as differences and do not affect');
+    out.push('the verdict — the tolerance is the statement that a gap this size does not');
+    out.push('matter. They are listed anyway, so the rule can be seen doing its work and');
+    out.push('a tolerance set too wide is visible rather than silent.');
+    out.push('');
+
+    const sheetsWithTolerated: string[] = [];
+    for (const d of swept.tolerated) {
+      if (!sheetsWithTolerated.includes(d.sheet)) sheetsWithTolerated.push(d.sheet);
+    }
+
+    out.push('<details><summary>Show the cells</summary>', '');
+    for (const sheet of sheetsWithTolerated) {
+      const mine = swept.tolerated.filter((d) => d.sheet === sheet);
+      out.push('', `**${cell(sheet)}** — ${n(mine.length)} cell(s)`, '');
+      out.push(...table(
+        ['Cell', 'Golden', 'Actual', 'Gap'],
+        mine.map((d) => [
+          code(d.address),
+          cell(d.base || BLANK),
+          cell(d.next || BLANK),
+          gapBetween(d.base, d.next),
+        ]),
+      ));
+    }
+    out.push('', '</details>');
   }
 
   if (positional.length) {

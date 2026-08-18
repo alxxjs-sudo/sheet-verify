@@ -17,6 +17,23 @@ export const KEY_SEP = '␟';
  */
 export const KEY_OCCURRENCE = ' ×';
 
+/**
+ * Tolerance applied when a config names none.
+ *
+ * A thousandth of a unit. What it absorbs is recalculation noise -- a total
+ * rebuilt in a different order lands a few bits away from the one stored last
+ * month, a gap of about 1e-7 on a figure in the hundreds of millions -- while
+ * staying well under a cent, so a change anyone wrote down on purpose is still
+ * reported.
+ *
+ * This is not the hidden float slack that used to live in `equalValues`. That
+ * one was invisible and scaled with the value, so nobody could say what it had
+ * swallowed. This is a plain number, written down, reported wherever it
+ * applies -- the run counts those cells and lists them -- and overridden by
+ * `tolerance` in any meta.json. Set it to 0 there for exactness.
+ */
+export const DEFAULT_TOLERANCE = 0.001;
+
 export function resolveSpec(spec: SheetSpec): ResolvedSpec {
   if (!spec.keyColumns?.length && !spec.matchRowsByPosition) {
     throw new Error(
@@ -29,7 +46,7 @@ export function resolveSpec(spec: SheetSpec): ResolvedSpec {
   const tol =
     typeof spec.tolerance === 'number'
       ? { '*': spec.tolerance }
-      : { '*': 0, ...(spec.tolerance ?? {}) };
+      : { '*': DEFAULT_TOLERANCE, ...(spec.tolerance ?? {}) };
 
   return {
     sheet: spec.sheet ?? 0,
@@ -110,7 +127,8 @@ export function equalValues(a: CellValue, b: CellValue, tol: number): boolean {
   if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
   if (typeof a === 'number' && typeof b === 'number') {
     if (Number.isNaN(a) && Number.isNaN(b)) return true;
-    // Only `tolerance` absorbs a gap, and it is zero unless someone set it.
+    // Only `tolerance` absorbs a gap. It defaults to DEFAULT_TOLERANCE rather
+    // than to zero, and every cell it forgives is counted and listed.
     //
     // This used to carry slack of scale x 1e-12 as well, on the reasoning that
     // Excel keeps 15 significant digits so a smaller gap is rounding from a

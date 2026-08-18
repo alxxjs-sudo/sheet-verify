@@ -546,7 +546,14 @@ test.describe('cell ledger', () => {
         Premiums: { keyColumns: ['PolicyId', 'Period'], tolerance: { Amount: 1 } },
       },
     });
-    const within = parseLedger(formatLedger(compared, 'differences'))
+    // Kept out of the default ledger: differences.xlsx is read as a list of
+    // things to fix, and a cell the tolerance already forgave is not one. It
+    // is counted and listed in report.md instead, and the full ledger still
+    // carries it with the tolerance it was judged against.
+    expect(parseLedger(formatLedger(compared, 'differences'))
+      .filter((r) => r['Status'] === 'within-tolerance')).toHaveLength(0);
+
+    const within = parseLedger(formatLedger(compared, 'all'))
       .filter((r) => r['Status'] === 'within-tolerance');
 
     expect(within).toHaveLength(1);

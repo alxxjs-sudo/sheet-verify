@@ -187,12 +187,11 @@ test.describe('comparison: differences that are not differences', () => {
     expect((await diffOf(golden, actual)).formulas).toHaveLength(1);
   });
 
-  test('a difference in the fifteenth digit is still a difference', async () => {
-    // This once asserted the opposite: a gap that small was called rounding
-    // from a different order of operations and dropped. It is dropped no
-    // longer. A cell whose stored values differ is a cell that differs, and
-    // which differences matter is the reader's call -- `tolerance` is how they
-    // make it, per column, on purpose.
+  test('with tolerance off, the fifteenth digit is still a difference', async () => {
+    // There is no hidden slack in the comparison: asked for exactness, it
+    // compares exactly, however far down the gap sits. What absorbs a gap is
+    // `tolerance` and nothing else -- and since it now defaults to 0.001, a
+    // test about exactness has to say so rather than assume it.
     const golden = await sheet('quirk-float-g.xlsx', [
       ['Region', 'Loss'],
       ['North', 34.45781166297475],
@@ -202,10 +201,32 @@ test.describe('comparison: differences that are not differences', () => {
       ['North', 34.45781166297476],
     ]);
 
-    const d = await diffOf(golden, actual);
+    const d = (await runWorkbook(golden, actual, {
+      defaults: { requireCachedValues: false, tolerance: 0 },
+      sheets: { Data: { keyColumns: ['Region'] } },
+    })).diff.sheets.find((x) => x.sheet === 'Data')!.diff!;
 
     expect(d.values).toHaveLength(1);
     expect(d.ok).toBe(false);
+  });
+
+  test('and the default tolerance absorbs exactly that, visibly', async () => {
+    // The same pair with nothing configured. The gap is 1e-14, far inside the
+    // 0.001 default, so it is not a difference -- and the run says how many
+    // cells it forgave rather than quietly dropping them.
+    const golden = await sheet('quirk-float-g5.xlsx', [
+      ['Region', 'Loss'],
+      ['North', 34.45781166297475],
+    ]);
+    const actual = await sheet('quirk-float-a5.xlsx', [
+      ['Region', 'Loss'],
+      ['North', 34.45781166297476],
+    ]);
+
+    const d = await diffOf(golden, actual);
+
+    expect(d.values).toHaveLength(0);
+    expect(d.ok).toBe(true);
   });
 
   test('and a tolerance is how you say it does not matter', async () => {
@@ -432,7 +453,13 @@ test.describe('artefacts of the file rather than the report', () => {
       ['North', 84.76743932 + 1.42109e-14],
     ]);
 
-    const run = await runWorkbook(golden, actual, POSITIONAL);
+    // Tolerance off, so the gap is a difference and there is something for the
+    // two to agree about; the default would absorb it in both at once, which
+    // is the same agreement seen from the other side.
+    const run = await runWorkbook(golden, actual, {
+      ...POSITIONAL,
+      defaults: { requireCachedValues: false, tolerance: 0 },
+    });
     const d = run.diff.sheets.find((s) => s.sheet === 'Data')!.diff!;
     const led = [...ledgerRows(run.compared, 'differences')]
       .filter((r) => r.status === 'value-differs');
@@ -454,6 +481,138 @@ test.describe('artefacts of the file rather than the report', () => {
 });
 
 test.describe('report shape', () => {
+  test('what differs gets its own table, naming the tolerance that drew the line', async () => {
+    // "894" reads as a disaster when 870 of those moved by less than a
+    // thousandth, so the count is split into parts and given a table of its
+    // own -- it is the figure the whole report exists to deliver.
+    const golden = await sheet('quirk-parts-g.xlsx', [
+      ['Region', 'Loss'],
+      ['North', 100],
+      ['South', 200],
+      ['East', 300],
+    ]);
+    const actual = await sheet('quirk-parts-a.xlsx', [
+      ['Region', 'Loss'],
+      ['North', 100 + 1e-9],
+      ['South', 200 + 1e-9],
+      ['East', 305],
+    ]);
+
+    const spec: WorkbookSpec = {
+      defaults: { requireCachedValues: false },
+      sheets: { Data: { keyColumns: ['Region'] } },
+    };
+    const run = await runWorkbook(golden, actual, spec);
+    const swept = await sweep(golden, actual, run.compared);
+    const md = formatMarkdownReport(run.diff, swept, { name: 'parts' });
+
+    const lines = md.split(/\r?\n/);
+    const head = lines.findIndex((l) => l.includes('**Cells that differ**'));
+    expect(head).toBeGreaterThan(-1);
+
+    // The tolerance is named on the column that used it, so nobody has to go
+    // looking for which number drew the line.
+    expect(lines[head + 2]).toBe('| total | within tolerance (±0.001) | above tolerance |');
+    expect(lines[head + 4]).toBe('| 3 | 2 | **1 (33.3%)** |');
+
+    // Three columns in the header and three in the row: a count rendered into
+    // a broken table is a count nobody reads.
+    const cols = (l: string) => l.split('|').slice(1, -1).length;
+    expect(cols(lines[head + 2]!)).toBe(3);
+    expect(cols(lines[head + 4]!)).toBe(3);
+  });
+
+  test('a changed table carries its own counts, and only when tolerance applied', async () => {
+    // "Value changes (1)" reads very differently depending on whether the rest
+    // of the table held still or drifted a hair each way.
+    const golden = await sheet('quirk-tblcount-g.xlsx', [
+      ['Region', 'Loss', 'Note'],
+      ['North', 100, 'a'],
+      ['South', 200, 'b'],
+      ['East', 300, 'c'],
+    ]);
+    const actual = await sheet('quirk-tblcount-a.xlsx', [
+      ['Region', 'Loss', 'Note'],
+      ['North', 100 + 1e-9, 'a'],
+      ['South', 200 + 1e-9, 'b'],
+      ['East', 305, 'c'],
+    ]);
+
+    const spec: WorkbookSpec = {
+      defaults: { requireCachedValues: false },
+      sheets: { Data: { keyColumns: ['Region'] } },
+    };
+    const run = await runWorkbook(golden, actual, spec);
+    const swept = await sweep(golden, actual, run.compared);
+    const md = formatMarkdownReport(run.diff, swept, { name: 'per-table' });
+
+    const lines = md.split(/\r?\n/);
+    const heading = lines.findIndex((l) => l.startsWith('### Data'));
+    expect(heading).toBeGreaterThan(-1);
+
+    // Counts sit between the heading and the findings, and are the table's
+    // own -- the one above the report is the whole file's.
+    expect(lines[heading + 2]).toContain('within tolerance (±0.001)');
+    expect(lines[heading + 4]).toBe('| 3 | 2 | **1 (33.3%)** |');
+    expect(lines.slice(heading).find((l) => l.startsWith('**Value changes')))
+      .toBe('**Value changes (1)**');
+  });
+
+  test('a table where nothing was tolerated still gets its counts', async () => {
+    const golden = await sheet('quirk-tblnone-g.xlsx', [
+      ['Region', 'Loss'],
+      ['North', 100],
+    ]);
+    const actual = await sheet('quirk-tblnone-a.xlsx', [
+      ['Region', 'Loss'],
+      ['North', 105],
+    ]);
+
+    const spec: WorkbookSpec = {
+      defaults: { requireCachedValues: false },
+      sheets: { Data: { keyColumns: ['Region'] } },
+    };
+    const run = await runWorkbook(golden, actual, spec);
+    const swept = await sweep(golden, actual, run.compared);
+    const md = formatMarkdownReport(run.diff, swept, { name: 'per-table-none' });
+
+    const lines = md.split(/\r?\n/);
+    const heading = lines.findIndex((l) => l.startsWith('### Data'));
+
+    // The same three columns in the same place, so two tables can be compared
+    // at a glance without working out whether a missing block means no drift
+    // or no data. With nothing forgiven, the column claims no number.
+    expect(lines[heading + 2]).toBe('| total | within tolerance | above tolerance |');
+    expect(lines[heading + 4]).toBe('| 1 | 0 | **1 (100%)** |');
+  });
+
+  test('a table whose comparison never ran claims no counts', async () => {
+    // Its key column is missing, so nothing was compared. Zeros here would say
+    // the cells were checked and matched, which is the opposite of the
+    // integrity error printed underneath.
+    const golden = await sheet('quirk-tblnorun-g.xlsx', [
+      ['Region', 'Loss'],
+      ['North', 100],
+    ]);
+    const actual = await sheet('quirk-tblnorun-a.xlsx', [
+      ['Region', 'Loss'],
+      ['North', 105],
+    ]);
+
+    const spec: WorkbookSpec = {
+      defaults: { requireCachedValues: false },
+      sheets: { Data: { keyColumns: ['Nope'] } },
+    };
+    const run = await runWorkbook(golden, actual, spec);
+    const swept = await sweep(golden, actual, run.compared);
+    const md = formatMarkdownReport(run.diff, swept, { name: 'per-table-norun' });
+
+    const lines = md.split(/\r?\n/);
+    const heading = lines.findIndex((l) => l.startsWith('### Data'));
+    expect(lines[heading + 2]).toContain('Comparison integrity');
+    expect(md).not.toContain('| 0 | 0 | **0 (0%)** |');
+  });
+
   test('a wall of differences is summarised by column, and still listed in full', async () => {
     // A recalculated report drifts in the last digit of every total, so one
     // sheet can carry hundreds of differences of which two matter. Flat, the
@@ -470,8 +629,11 @@ test.describe('report shape', () => {
     }
     const actual = await sheet('quirk-wall-a.xlsx', drifted);
 
+    // Exactness on purpose: this is a test about how a wall of differences is
+    // presented, so the wall has to exist. Left to the default tolerance the
+    // 1e-9 drifts would be absorbed and there would be one difference to show.
     const { diff } = await runWorkbook(golden, actual, {
-      defaults: { requireCachedValues: false },
+      defaults: { requireCachedValues: false, tolerance: 0 },
       sheets: { Data: { keyColumns: ['Region'] } },
     });
     const md = formatMarkdownReport(diff, null, { name: 'wall' });

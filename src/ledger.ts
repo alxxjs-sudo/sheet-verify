@@ -119,7 +119,14 @@ export function* ledgerRows(
 
   for (const t of tables) {
     const { base, next, spec } = t;
-    const emit = (status: CellStatus) => scope === 'all' || status !== 'match';
+    // `differences.xlsx` is read as a list of things to fix. A cell inside the
+    // tolerance set for its column is not one: the config already said a gap
+    // that size does not matter, and a thousand amber rows saying so bury the
+    // handful that do. They are still counted and listed in report.md, under
+    // "Inside the tolerance you set", so the rule stays visible -- and `all`
+    // brings them back here beside every matching cell.
+    const emit = (status: CellStatus) =>
+      scope === 'all' || (status !== 'match' && status !== 'within-tolerance');
 
     // A value difference is either the cause or a consequence of one. The
     // distinction is the most useful thing in the report, so the ledger
