@@ -691,6 +691,49 @@ fallback. `ignoreColumns` excludes a column; `ignoreRows` excludes a row **by
 key** — the row-wise counterpart, for key-value blocks where the per-run value
 is a row and no column exclusion can reach it.
 
+**The default is `0.001`**, applied when no config names one. It absorbs what
+recalculation leaves behind — a total rebuilt in a different order lands about
+`1.19e-7` away from the one stored last month on a figure in the hundreds of
+millions — while staying well under a cent, so anything written down on purpose
+is still reported. Set `"tolerance": 0` in a `meta.json` for exactness, or a
+larger number where a column deserves one.
+
+It is **absolute, not a percentage**. On a figure like 164,488,104.6, a
+tolerance of `0.01` means "ignore anything under a cent". Bear the scale of the
+column in mind: the same `0.01` on a rate column holding `0.05` is a fifth of
+the value.
+
+**Both layers apply it.** Layer 1 looks the tolerance up by column name; layer 2
+works in addresses, so it reads the same per-column tolerances off the tables
+layer 1 compared, and falls back to the `*` entry from `defaults` for cells no
+compared table covers — title blocks, unkeyed tables, anywhere else it reaches.
+Without that, a tolerance would quiet the keyed comparison while the headline
+`cells differing` count went on reporting the same noise.
+
+Cells inside tolerance are **counted separately and still listed**, never
+dropped:
+
+```markdown
+**Cells that differ**
+
+| total | within tolerance (±0.001) | above tolerance |
+| ---: | ---: | ---: |
+| 894 | 870 | **24 (2.7%)** |
+
+## Inside the tolerance you set (870)
+```
+
+That way a tolerance set too wide is visible rather than silent — you can read
+what it swallowed and see the size of each gap it forgave. In
+`differences.xlsx` the same cells carry the status `within-tolerance`, so the
+Status column filters them out or in.
+
+One caveat, stated because it is easy to trip over: layer 2 never sees a cell's
+type, only the text it displays, so text that reads as a number counts as one
+there. A version written `4.20` would be compared numerically. Set a tolerance
+to the size of the rounding it is meant to absorb rather than to a round figure,
+and this never bites.
+
 ### Report metadata
 
 Some cells identify the run rather than describe it. A report's name, its id and

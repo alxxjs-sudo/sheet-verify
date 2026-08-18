@@ -1,5 +1,67 @@
 # Changelog
 
+## Unreleased
+
+### Tolerance defaults to 0.001
+
+Applied when no config names one, to both layers, and overridden by `tolerance`
+anywhere in the tree — `0` for exactness. It absorbs recalculation noise, which
+lands about `1.19e-7` from the stored figure on a report in the hundreds of
+millions, and stays well under a cent so a change made on purpose still shows.
+
+`0.01` was the first proposal and was measurably too wide: it swallowed a real
+`34.45 → 34.46`, and the suite's own "a difference that matters is still caught,
+however small" failed against it.
+
+Four existing tests now ask for `tolerance: 0` explicitly. They were written
+when exactness was the default, and each is about something else — how a wall of
+differences is presented, whether the ledger and the comparer agree — so they
+say what they need rather than relying on it.
+
+### What differs gets its own table
+
+```
+**Cells that differ**
+
+| total | within tolerance (±0.001) | above tolerance |
+| ---: | ---: | ---: |
+| 894 | 870 | **24 (2.7%)** |
+```
+
+894 reads as a disaster when 870 of those moved by less than a thousandth. It is
+the figure the whole report exists to deliver, so it no longer sits as one line
+among the file paths, and the tolerance that drew the line is named on the
+column that used it. Where a run applies several — tolerance resolves per column
+— the header gives the range rather than claiming a single number.
+
+### `differences.xlsx` leaves out within-tolerance rows
+
+It is read as a list of things to fix, and a cell the tolerance already forgave
+is not one. `--ledger all` still carries them, and `report.md` lists every one
+under "Inside the tolerance you set", so the rule stays auditable.
+
+### Tolerance reaches layer 2
+
+A tolerance used to quiet only the keyed comparison. The address sweep knew
+nothing about it, so `cells differing` — the number at the top of every report,
+and the one most people read first — went on counting gaps of `1.19e-7` that
+the config had already declared immaterial, and the same cells filled the
+"nothing checked them" list.
+
+The sweep now reads the per-column tolerances off the tables layer 1 compared,
+translating them from column names to the addresses it works in, and takes a
+blanket `*` from `defaults` for the cells no compared table covers. Both layers
+therefore agree about which gaps matter.
+
+Cells inside tolerance are counted and listed on their own — `within tolerance`
+beside the differing count, and a folded section showing each cell with the size
+of its gap. Hiding them would make a tolerance set too wide invisible, which is
+a worse failure than the noise it was set to remove.
+
+Layer 2 compares the text a cell displays and never sees its type, so text that
+reads as a number is treated as one. Documented rather than worked around: the
+answer is to set a tolerance to the size of the rounding it absorbs.
+
 ## 2026-08-18
 
 The comparison tree moved to `output_comparison/`, cases can be named and
