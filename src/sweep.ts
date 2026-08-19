@@ -395,7 +395,7 @@ function headerBandsOf(compared: ComparedTable[]): Map<string, HeaderBand[]> {
     const key = canon(t.sheet);
     const bands = out.get(key) ?? [];
     bands.push({
-      from: t.spec.headerRow,
+      from: Math.max(t.spec.headerRow, 1),
       to: t.spec.endRow > 0 ? t.spec.endRow : Number.MAX_SAFE_INTEGER,
       byCol,
     });
@@ -452,7 +452,7 @@ function toleranceBandsOf(compared: ComparedTable[]): Map<string, ToleranceBand[
     const cols = columnRange(t.spec.columns, 0);
     bands.push({
       label: t.label,
-      from: t.spec.headerRow,
+      from: Math.max(t.spec.headerRow, 1),
       to: t.spec.endRow > 0 ? t.spec.endRow : Number.MAX_SAFE_INTEGER,
       fromCol: t.spec.columns ? cols.from : 1,
       toCol: t.spec.columns ? cols.to : Number.MAX_SAFE_INTEGER,
@@ -547,11 +547,16 @@ function coverageOf(compared: ComparedTable[]): Map<string, Coverage> {
     // The header row is compared in substance -- a renamed column surfaces as
     // an added/removed pair -- so counting it as covered keeps a rename from
     // also arriving here as an unexplained gap.
+    // A table with no header row -- `headerRow` 0, its data starting at the top
+    // of the sheet -- has no such row to mark, and no row 0 exists to hold the
+    // marks. Recording them anyway would put addresses in the covered set that
+    // no sweep can ever visit.
+    const header = table.spec.headerRow > 0 ? table.spec.headerRow : null;
     cov.spans.push({
-      from: table.spec.headerRow,
+      from: header ?? 1,
       to: table.spec.endRow > 0 ? table.spec.endRow : Number.MAX_SAFE_INTEGER,
     });
-    cov.rows.add(table.spec.headerRow);
+    if (header) cov.rows.add(header);
 
     for (const side of ['base', 'next'] as const) {
       const model = table[side];
@@ -559,7 +564,7 @@ function coverageOf(compared: ComparedTable[]): Map<string, Coverage> {
         const colNum = model.headerIndex.get(column);
         if (colNum !== undefined) {
           cov.columns.add(colNum);
-          cov[side].add(addr(table.spec.headerRow, colNum));
+          if (header) cov[side].add(addr(header, colNum));
         }
       }
     }

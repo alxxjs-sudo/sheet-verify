@@ -255,7 +255,7 @@ by the API, which is handed one case at a time:
 | `keyColumns` | *required* | column(s) identifying a row |
 | `tables` | – | several tables on one sheet, keyed by name |
 | `sheet` | `0` | worksheet name or index — single-sheet API only |
-| `headerRow` | `1` | 1-based row holding headers |
+| `headerRow` | `1` | 1-based row holding headers; really "the row above the data", so `0` means there is no header row and the table starts at row 1 |
 | `endRow` | *last row* | 1-based last row; set for you when a sheet declares `tables` |
 | `columns` | *every column* | column range this table occupies, `"H:J"`; set for you when a sheet holds tables side by side |
 | `tolerance` | `0` | number, or per-column record with `*` fallback |

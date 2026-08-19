@@ -64,7 +64,23 @@ export type FormulaMode = 'a1' | 'r1c1' | 'header';
 export interface SheetSpec {
   /** Worksheet name or 0-based index. Ignored for CSV. Default 0. */
   sheet?: string | number;
-  /** 1-based row holding the headers. Default 1. */
+  /**
+   * 1-based row holding the headers. Default 1.
+   *
+   * Read it as "the row above the data", which is what it has always meant --
+   * the table runs from `headerRow + 1`. That makes `0` a legal value and not
+   * a special case: the data starts at row 1 and there is no header row.
+   * Columns are then named after themselves -- `Column A`, `Column B` -- the
+   * same naming a blank header row already produces.
+   *
+   * Set it to 0 for a block with no headers of its own, the usual case being a
+   * key-value block of label/value pairs sitting at the top of a sheet. Picking
+   * a header row there costs twice over: that row stops being data, and the
+   * value column takes its name from a *value*. Where the value is the report's
+   * own name or id it differs between any two runs, so the column pairs with
+   * nothing in the other file and every row of the block reports as one column
+   * removed and another added.
+   */
   headerRow?: number;
   /**
    * 1-based last row of the table, inclusive. Bounds a table that does not

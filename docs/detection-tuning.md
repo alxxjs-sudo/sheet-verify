@@ -97,6 +97,23 @@ the only complete-and-distinct one, so the block ends up keyed on the very
 figures being tested. A changed value then reads as one row removed and another
 added, and never as a change.
 
+**The other symptom, and the louder one**: every row of the block reported as
+one column removed and another added, the column named after a *value* — a
+report name, a file name, a timestamp. That is the value column taking its name
+from whichever row was chosen as the header. Two runs of the same report carry
+different names there, so the column pairs with nothing in the other file and
+every row of the block is reported twice, with any real change buried among
+them.
+
+**Detection now recognises most of these on its own.** These generators paint
+the label column and leave the rest alone, on every row of the block — so the
+paint marks out a *column*, not a row, and no row stands out as a header. Where
+that holds, detection takes the row above the block as the header row and every
+row of the block becomes data. Run `--print-spec` before writing anything: the
+block may already be right.
+
+What it cannot see is a block nobody painted. Those still need the recipe below.
+
 Take the blank row above the block as the header row instead:
 
 ```json
@@ -118,6 +135,22 @@ itself, and findings read `GCMP USD rate · Column B` instead of `row #13`.
 It also makes the `metadata` list work on that sheet: entries like
 `Creation Date` are matched as row labels, so they are set aside there the same
 way they are everywhere else.
+
+**When the block starts on row 1** — which report-info blocks usually do —
+there is no blank row above it to point at. Write `0`:
+
+```json
+{
+  "sheets": {
+    "Report Info": { "headerRow": 0, "keyColumns": ["Column A"] }
+  }
+}
+```
+
+`headerRow` has always named the row *above* the data, since the table runs from
+`headerRow + 1`. So `0` is not a special case bolted on: it is the row above row
+1, and it reads exactly as a blank header row does. Every row from 1 down is
+data, and the columns are `Column A` and `Column B`.
 
 **When the block is small and some rows have no label**, match by position
 instead. A five-row exchange-rate block written in a fixed order is exactly

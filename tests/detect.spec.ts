@@ -251,3 +251,99 @@ test.describe('detectSpec', () => {
     expect(strict.reason).toContain('keyColumns');
   });
 });
+
+/**
+ * A key-value block has no header row. Every row is a label and its value, so
+ * picking one costs twice over: the row picked stops being data, and the value
+ * column takes its name from a *value*. Where that value is the report's own
+ * name or id it differs between any two runs, so the column pairs with nothing
+ * in the other file and the whole block reports as one column removed and
+ * another added.
+ */
+test.describe('a block with no header row', () => {
+  /** The report info block every one of these generators opens a sheet with. */
+  async function buildInfoBlock(name: string, reportName: string): Promise<string> {
+    await mkdir(DIR, { recursive: true });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Report Info');
+
+    const pairs: [string, string | number][] = [
+      ['Report ID', 4537],
+      ['Pro-Forma Report Name', reportName],
+      ['View Of Risk', 'RMS_v18.1'],
+      ['Report Creator', 'Sumedha Arya'],
+      ['Edison Version', '5.0.2'],
+    ];
+    for (const [label, value] of pairs) ws.addRow([label, value]);
+    // Painted down the label column on every row, which is how these reports
+    // mark a label -- not how they mark a header.
+    for (let r = 1; r <= pairs.length; r++) {
+      ws.getRow(r).getCell(1).font = { bold: true };
+    }
+
+    const path = join(DIR, name);
+    await wb.xlsx.writeFile(path);
+    return path;
+  }
+
+  test('is read as data with columns named after themselves', async () => {
+    const path = await buildInfoBlock('det-kv-block.xlsx', 'Report_5.0.2_0807');
+    const [sheet] = await detectWorkbook(path);
+
+    const table = sheet!.tables[0]!;
+    // headerRow names the row *above* the data, so a block starting at the top
+    // of the sheet has none: row 0 does not exist.
+    expect(table.headerRow).toBe(0);
+    expect(table.rows).toBe(5); // every row is data, including the first two
+    expect(table.headers).toEqual(['Column A', 'Column B']);
+    expect(table.keyColumns).toEqual(['Column A']);
+  });
+
+  test('does not report the value column as removed and added when a run id changes', async () => {
+    // The failure this exists to stop. Two genuinely different runs differ in
+    // the report name, and that value used to be the column's *name*.
+    const golden = await buildInfoBlock('det-kv-golden.xlsx', 'Report_5.0.2_0807');
+    const actual = await buildInfoBlock('det-kv-actual.xlsx', 'Report_5.1_0818');
+
+    const { runWorkbook } = await import('../src/index.js');
+    const { diff } = await runWorkbook(golden, actual, await detectSpec(golden));
+
+    const sheet = diff.sheets.find((s) => s.sheet === 'Report Info')!;
+    expect(sheet.diff!.schema.added).toEqual([]);
+    expect(sheet.diff!.schema.removed).toEqual([]);
+    // Five rows, and the one that really changed is reported as a value.
+    expect(sheet.diff!.rows.compared).toBe(5);
+  });
+
+  test('an unpainted block keeps its header row', async () => {
+    // The guard. Every row of a plain table is painted identically too -- not
+    // at all -- so without excluding those, any report arriving as an unstyled
+    // grid would lose its column names.
+    await mkdir(DIR, { recursive: true });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Plain');
+    ws.addRow(['PolicyId', 'Region']);
+    ws.addRow(['P-1', 'Sofia']);
+    ws.addRow(['P-2', 'Varna']);
+
+    const path = join(DIR, 'det-plain-grid.xlsx');
+    await wb.xlsx.writeFile(path);
+    const [sheet] = await detectWorkbook(path);
+
+    expect(sheet!.tables[0]!.headerRow).toBe(1);
+    expect(sheet!.tables[0]!.headers).toEqual(['PolicyId', 'Region']);
+  });
+
+  test('headerRow 0 can be written by hand for a block detection got wrong', async () => {
+    const path = await buildInfoBlock('det-kv-manual.xlsx', 'Report_5.0.2_0807');
+    const { runWorkbook } = await import('../src/index.js');
+
+    const { compared } = await runWorkbook(path, path, {
+      sheets: { 'Report Info': { headerRow: 0, keyColumns: ['Column A'] } },
+    });
+    const table = compared[0]!;
+    expect(table.base.headers).toEqual(['Column A', 'Column B']);
+    // The range covers the data alone -- there is no row 0 to name.
+    expect(table.diff.rows.compared).toBe(5);
+  });
+});

@@ -4,6 +4,53 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.3.0 — 2026-08-19
+
+### A block with no header row is read as data, not renamed by one
+
+A key-value block -- a label in column A, its value in column B -- has no header
+row. Detection had to pick one anyway, and that cost twice over: the row picked
+stopped being data, and the value column took its name from a *value*.
+
+Where that value is the report's own name or id, it differs between any two runs
+by construction. The column then pairs with nothing in the other file, and every
+row of the block arrives as one column removed and another added -- thirty
+findings for a fifteen-row block, with the real change buried among them. The
+rows above the chosen header were not compared at all: on a pro-forma report,
+`Report ID` and the report name sat outside every table, so an edit to either
+was invisible to layer 1.
+
+It went unseen here because a golden and its actual are usually the same report
+with something planted in it, so the name matched. Two genuinely different runs
+are what expose it.
+
+Detection now tells the two shapes apart by asking what the painting marks out.
+A header row is painted to stand out from its data -- bold white on navy across
+the table, nothing beneath it. A key-value block is painted down its label
+column on *every* row, so the paint describes a column, not a row, and no row
+stands out. Where every row is painted alike, the block is read as data from its
+first row down, with columns named `Column A`, `Column B` -- names no edit to
+the report can change.
+
+Blocks nobody painted are excluded from the rule deliberately. Every row of an
+unstyled table is painted identically too -- not at all -- and concluding "no
+header" there would throw away the column names of every plain grid.
+
+`headerRow` accepts `0` to say this by hand, for a block detection reads wrong.
+It is not a new concept: `headerRow` has always named the row *above* the data,
+so `0` is simply the row above row 1 -- which is what a block at the top of a
+sheet needs, and what no value could express before.
+
+Measured over the same tree of 34 real cases: **1,092 tables before and after,
+14,747 columns before and after, no case changing verdict** -- and **103 more
+rows compared**, on 58 tables. Eleven of those rows carried a planted edit that
+had never been compared.
+
+Table ranges are more accurate as a side effect. The range said what rectangle a
+table covered by starting at `headerRow`, which claimed a row that named nothing
+when the header row was blank. It now starts at the header row only when that
+row named the columns, correcting **163 ranges** across the tree.
+
 ## 1.2.0 — 2026-08-19
 
 Detection finds blocks it used to walk past — tables printed side by side, and

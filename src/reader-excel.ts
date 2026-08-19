@@ -88,7 +88,11 @@ function modelFrom(ws: ExcelJS.Worksheet, path: string, spec: ResolvedSpec): She
   const last = spec.endRow > 0 ? Math.min(spec.endRow, ws.rowCount) : ws.rowCount;
 
   const headers: { name: string; colNum: number }[] = [];
-  const headerRow = ws.getRow(spec.headerRow);
+  // `headerRow` names the row above the data, so a table whose data starts on
+  // row 1 has no header row to read -- there is no row 0 to ask for. Every
+  // column is then named after itself, exactly as a blank header row already
+  // names them, and row 1 is data like any other.
+  const headerRow = spec.headerRow > 0 ? ws.getRow(spec.headerRow) : null;
 
   // A table can be bounded left and right as well as top and bottom, for a
   // sheet that puts two of them side by side. Unbounded is the default and
@@ -96,7 +100,7 @@ function modelFrom(ws: ExcelJS.Worksheet, path: string, spec: ResolvedSpec): She
   const { from, to } = columnRange(spec.columns, ws.columnCount);
 
   for (let colNum = from; colNum <= Math.min(to, ws.columnCount); colNum++) {
-    const name = headerName(headerRow.getCell(colNum));
+    const name = headerRow ? headerName(headerRow.getCell(colNum)) : '';
     if (name) {
       headers.push({ name, colNum });
       continue;
@@ -113,8 +117,12 @@ function modelFrom(ws: ExcelJS.Worksheet, path: string, spec: ResolvedSpec): She
 
   if (!headers.length) {
     const where = spec.columns ? ` in columns ${spec.columns}` : '';
+    const at =
+      spec.headerRow > 0
+        ? `on row ${spec.headerRow}`
+        : 'from row 1, which headerRow 0 reads as data with no header row';
     throw new Error(
-      `sheet-verify: no headers found on row ${spec.headerRow}${where} of "${ws.name}" in ${path}`,
+      `sheet-verify: no headers found ${at}${where} of "${ws.name}" in ${path}`,
     );
   }
 

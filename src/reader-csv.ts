@@ -70,7 +70,19 @@ export class CsvReader implements WorkbookReader {
       relax_quotes: true,
     });
 
-    const headerLine = records[spec.headerRow - 1];
+    // `headerRow` names the line above the data, so 0 means the file opens
+    // straight into data with no header line at all. Columns are named after
+    // themselves then, which is what the Excel reader does with a blank header
+    // row, so a key written for one file works for the other.
+    const width = records.reduce((w: number, r: string[]) => Math.max(w, r.length), 0);
+    const headerLine =
+      spec.headerRow > 0
+        ? records[spec.headerRow - 1]
+        : Array.from({ length: width }, (_, i) =>
+            records.some((r: string[]) => String(r[i] ?? '').trim() !== '')
+              ? `Column ${numToCol(i + 1)}`
+              : '',
+          );
     if (!headerLine) {
       throw new Error(`sheet-verify: no header row at line ${spec.headerRow} of ${path}`);
     }

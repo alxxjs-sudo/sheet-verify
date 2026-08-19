@@ -341,18 +341,52 @@ function tablesOnSheet(
     if (headerAt === -1) headerAt = fallback;
     if (headerAt >= reg.r1) continue; // nothing left below it to be data
 
-    const headers = cut(headerAt).map((h) => String(h ?? '').trim());
-    if (headers.filter((h) => h !== '').length < 2) continue;
+    // Some blocks have no header row at all, and picking one anyway does two
+    // things wrong: the row picked stops being data, and the value column is
+    // named after whatever value happens to sit in it. On a report info block
+    // that name landed on the report's own name -- which differs by
+    // construction between two runs -- so the column matched nothing in the
+    // other file and all fifteen rows reported as one column removed and
+    // another added, with the real changes buried among them.
+    const noHeader = paintedByColumn(styled, grid, reg);
+
+    // `headerRow` is the row *above* the data throughout, so a block with no
+    // header is one whose header row is the row above it -- 0 when it starts
+    // at the top of the sheet. Nothing downstream needs a new concept.
+    const top = noHeader ? reg.r0 : headerAt + 1;
 
     const source = values ?? grid;
     const body: string[][] = [];
-    for (let r = headerAt + 1; r <= reg.r1; r++) {
+    for (let r = top; r <= reg.r1; r++) {
       body.push((source[r] ?? []).slice(reg.c0, reg.c1 + 1));
     }
 
+    // Named after themselves, which is what the reader does with a blank
+    // header row, so both agree what a key column is called.
+    //
+    // Whether a column holds anything is asked of the grid rather than of
+    // `body`. `body` carries stored values only, so a column of formulas the
+    // generator never computed reads as empty there -- while the reader counts
+    // a formula cell as data when it names a column after itself. Asking the
+    // wrong one cost a four-row block of layer premiums its name and then its
+    // place: eleven columns became one, and the block was dropped for being
+    // too narrow to be a table.
+    const holdsData = (i: number) => {
+      for (let r = top; r <= reg.r1; r++) {
+        if (!isBlank((grid[r] ?? [])[reg.c0 + i])) return true;
+      }
+      return false;
+    };
+    const headers = noHeader
+      ? Array.from({ length: reg.c1 - reg.c0 + 1 }, (_, i) =>
+          holdsData(i) ? `Column ${numToCol(reg.c0 + i + 1)}` : '',
+        )
+      : cut(headerAt).map((h) => String(h ?? '').trim());
+    if (headers.filter((h) => h !== '').length < 2) continue;
+
     tables.push({
       name: '',
-      headerRow: headerAt + 1,
+      headerRow: top,
       endRow: reg.r1 + 1,
       columns: `${numToCol(reg.c0 + 1)}:${numToCol(reg.c1 + 1)}`,
       region: reg,
@@ -410,6 +444,43 @@ function looksLikeHeading(cell: ExcelJS.Cell): boolean {
   if (cell.font?.bold) return true;
   const fill = cell.fill as { type?: string; fgColor?: { argb?: string } } | undefined;
   return Boolean(fill?.type === 'pattern' && fill.fgColor?.argb);
+}
+
+/**
+ * Whether a block's painting marks out a column rather than a row.
+ *
+ * A header row is painted to stand out from its data -- bold white on navy
+ * across the width of the table, and nothing beneath it. A key-value block is
+ * the other shape: the label column is painted on every row, so the paint says
+ * "this column holds the labels", not "this row is the header". Told apart by
+ * asking whether every row is painted identically; if one differs, some row
+ * stands out and the search that found it was right.
+ *
+ * A block nobody painted is excluded, and that exclusion is the point rather
+ * than an oversight. Every row of an unstyled table is painted identically
+ * too -- not at all -- so without it every report that arrives as a plain grid
+ * would lose its column names.
+ */
+function paintedByColumn(
+  styled: boolean[][] | undefined,
+  grid: string[][],
+  reg: Region,
+): boolean {
+  if (!styled) return false; // CSV carries no formatting to read
+  let signature: string | null = null;
+  for (let r = reg.r0; r <= reg.r1; r++) {
+    const row = (grid[r] ?? []).slice(reg.c0, reg.c1 + 1);
+    if (row.every((v) => isBlank(v))) continue;
+    const painted = (styled[r] ?? [])
+      .slice(reg.c0, reg.c1 + 1)
+      .map((on, i) => (on ? i : -1))
+      .filter((i) => i >= 0)
+      .join(',');
+    if (!painted) return false;
+    if (signature === null) signature = painted;
+    else if (painted !== signature) return false;
+  }
+  return signature !== null;
 }
 
 /**

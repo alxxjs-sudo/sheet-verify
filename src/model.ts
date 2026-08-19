@@ -11,13 +11,15 @@ export const KEY_SEP = '␟';
  * Read off the model rather than the spec, so it says what was *read* and not
  * what was asked for. A spec with no `endRow` runs to the bottom of the sheet
  * and a spec with no `columns` spans its whole width; neither is a useful
- * answer to "what did this comparison cover". The header row is included,
- * because it is part of the table even though its cells are compared as
- * column names rather than as values.
+ * answer to "what did this comparison cover". The header row is included when
+ * there was one, because it is part of the table even though its cells are
+ * compared as column names rather than as values.
  *
  * Empty when the table has no columns at all, which is a table that could not
  * be read and has nothing to report.
  */
+const POSITIONAL_HEADER = /^Column [A-Z]+$/;
+
 export function tableRange(model: SheetModel, headerRow: number): string {
   const cols = [...model.headerIndex.values()];
   if (!cols.length) return '';
@@ -25,21 +27,31 @@ export function tableRange(model: SheetModel, headerRow: number): string {
   const first = Math.min(...cols);
   const last = Math.max(...cols);
 
-  // The bottom row, from the last row in file order. Walking back from the end
-  // covers a duplicate key, which is left out of `rows` while keeping its
-  // place in `order`.
-  let bottom = headerRow;
-  for (let i = model.order.length - 1; i >= 0; i--) {
-    const row = model.rows.get(model.order[i]!);
-    const address = row && Object.values(row)[0]?.address;
-    const m = address && /^[A-Z]+(\d+)$/.exec(address);
-    if (m) {
-      bottom = Math.max(bottom, Number(m[1]));
-      break;
+  /** Row number of the first row found from `start`, stepping by `step`. */
+  const rowFrom = (start: number, step: number): number | null => {
+    for (let i = start; i >= 0 && i < model.order.length; i += step) {
+      const row = model.rows.get(model.order[i]!);
+      const address = row && Object.values(row)[0]?.address;
+      const m = address && /^[A-Z]+(\d+)$/.exec(address);
+      if (m) return Number(m[1]);
     }
-  }
+    return null;
+  };
 
-  return `${numToCol(first)}${headerRow}:${numToCol(last)}${bottom}`;
+  // Walking back from the end covers a duplicate key, which is left out of
+  // `rows` while keeping its place in `order`.
+  const bottom = rowFrom(model.order.length - 1, -1);
+  const firstData = rowFrom(0, 1);
+
+  // A header row belongs to the table only when it named the columns. Where it
+  // named nothing -- `headerRow` 0, or the blank separator row that stands in
+  // for one above a block with no headers of its own -- every column is named
+  // after itself and the table is its data alone. Including a row the
+  // comparison never read would overstate what was covered by exactly one row.
+  const named = model.headers.some((h) => !POSITIONAL_HEADER.test(h));
+  const top = headerRow > 0 && named ? headerRow : (firstData ?? Math.max(headerRow, 1));
+
+  return `${numToCol(first)}${top}:${numToCol(last)}${Math.max(bottom ?? top, top)}`;
 }
 
 /**
