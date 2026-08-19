@@ -1,6 +1,231 @@
 # Changelog
 
-## Unreleased
+Versions follow the policy in [the README](README.md#versioning): a major is
+reserved for changes to configuration keys, CLI flags, exports and artefact
+shapes. Detection changes ship as minors, each saying what to recheck.
+
+## 1.2.0 — 2026-08-19
+
+Detection finds blocks it used to walk past — tables printed side by side, and
+tables under a bold section title. A run can assert what it expects to compare,
+and a report type's configuration can be generated from the pairs. Table
+numbering shifts where new blocks appear, so anything pinned by number wants
+rechecking with `--print-spec`.
+
+### A section title no longer hides the table underneath it
+
+Detection picks a block's header row by looking for the row that names the most
+columns, with formatting breaking the tie — these generators paint a header row
+deliberately, and nothing else on the sheet is painted that way.
+
+A bold section title sitting alone in column A beat that test. It was the only
+painted row in its block, so it won the search; then the block was discarded for
+naming a single column, and every row under the title went unseen by layer 1
+with nothing said about it. On one report that lost an entire exchange-rate
+block — four label/value pairs, one of which had changed.
+
+A row naming fewer than two columns is now passed over during the search, which
+is the same rule already applied to the row that wins it. Across a tree of 33
+real cases this brought **55 previously invisible blocks into detection** and
+44 more tables into layer 1, with no change to any table that was already found
+and no case changing verdict.
+
+Table numbers below a newly found block shift by one — `Table 2` means "the
+second block detection finds", so anything pinned by number on an affected sheet
+needs rechecking with `--print-spec`. None of the sheets configured in the tree
+this was measured on were affected.
+
+### The README is a starting point again, not the manual
+
+It had grown to 1,181 lines, most of it reference that only matters once you
+are already running. Split into a document per question, with the README down
+to 321 lines: what it is, install, quick start, the five things worth doing
+once, the one behaviour to know before trusting a result, how it works, and a
+table saying where everything else lives.
+
+| | |
+| --- | --- |
+| `docs/cli.md` | the command: flags, pair naming, case selection, labels, generating a config |
+| `docs/configuration.md` | keys, sheets, tables, tolerance, metadata, the options reference |
+| `docs/detection-tuning.md` | working out which correction a report needs |
+| `docs/reading-a-report.md` | the case folder, each artefact, reading the verdict |
+| `docs/api.md` | matchers, the direct API, invariants, extending it |
+
+No prose was dropped -- every line of the original lands in exactly one of
+these, checked mechanically -- and every internal link was repointed and
+verified to resolve. `docs/` now ships with the package, so those links work
+for a consumer too.
+
+### Adding a table to a single-table sheet no longer replaces it
+
+A sheet holding one table carries its header row and key at the sheet level,
+with no `tables` block -- that is what makes reports read "Ledger" rather than
+"Ledger · Table 1". Declaring a table on such a sheet *replaced* it: one entry
+written to check a title block also stopped the sheet's real table being
+compared, and nothing said so. The sheet's own table is now kept, filed under
+the sheet's name, which is the name reports already give it:
+
+```
+| Ledger         | `A1:C4` | 3 columns | 3 rows | key |
+| Ledger · Bands | `A5:C7` | 3 columns | 2 rows | key |
+```
+
+Only fires when a layer above declares `tables` and the one below has none, so
+a sheet-level `keyColumns` written on its own -- the common correction, and the
+one in every example -- behaves exactly as before.
+
+### Overriding and adding tables: docs/detection-tuning.md
+
+Two new sections, both written from behaviour that was checked rather than
+assumed: which fields survive a partial override (all of them -- merging is per
+table and per field), what a table name that matches nothing does (it adds a
+phantom at `A1:B1` and fails the run, rather than doing nothing), and the three
+things that decide where an added table lands -- `headerRow`, its bound, and
+`columns` when it has a neighbour.
+
+### `--write-meta`: a report type's meta.json, from the pairs
+
+Starting a report type meant typing out a config by hand and finding out which
+parts were needed from the failures. Now:
+
+    sheet-verify --write-meta output_comparison/natural_cat_srq
+
+It reads the pairs under that folder and writes a `meta.json` holding what it
+can show evidence for, and comments for the rest:
+
+- **`reportType`**, from the folder name, with a note that the spelling is
+  yours to fix.
+- **`metadata`** — run-identity labels found in the files, matched against a
+  deliberately short vocabulary and kept only where the value was **observed to
+  take more than one value** across the files scanned. A label found in a wide
+  header row is passed over: "Program ID" as the 28th column heading of a table
+  is not run identity, and listing it would drop that column out of the
+  comparison. A report type that spells its own name into the label gets the
+  wildcard form, `*Report Name`, which is what covers Facility / Pro-Forma /
+  RiskPlay in one entry. Labels found but unvarying are listed as candidates,
+  not written.
+- **`defaults`** — `requireCachedValues: false` when the files really do carry
+  formulas with no stored result, `fillKeyDown: true` when a sheet really does
+  write a group heading once and leave it blank beneath. Both quote the
+  evidence.
+- **the unkeyed tables**, largest first, as a note — the work that is left,
+  visible without being pre-decided.
+
+What it deliberately does **not** write is per-sheet header rows, end rows and
+keys. Those are re-detected from the files on every run, which is what lets a
+report change shape without breaking the config; frozen into a file they go
+stale, and a generated entry is indistinguishable from one somebody meant.
+
+It refuses to touch a `meta.json` that already has settings in it.
+
+On a facility report it produced `Report ID`, `*Report Name`, `Creation Date`
+and `Elapsed Processing Time` — the hand-written list plus one — and the tree
+it wrote gave the same verdicts as the hand-written config.
+
+### `expect`: a table that stops being compared now fails
+
+Detection is remade from the files on every run. That is the point, and it
+means coverage can shrink with nothing to show for it but a smaller number in
+a summary line nobody was watching. On one report here an entire block went
+unread by layer 1 for the life of the tool.
+
+    { "expect": { "Report Info": ["A2:B17", "H2:J22", "A19:B24"], "Cover": 1 } }
+
+Ranges, or a count. Checked after the comparison and reported as an integrity
+error, which fails the run and names the sheet:
+
+```
+- Report Info: expected 5 table(s), compared 4 — not compared: A99:B120
+- Comments: expected 3 table(s) compared by name and key, found 1
+```
+
+It is an assertion, never an instruction — it changes nothing about what is
+compared, so an entry that is wrong stops the run and says so rather than
+quietly comparing the wrong thing, which is what a pinned `headerRow` does when
+a report shifts.
+
+`sheet-verify --write-expect` records it from a run, into each case's
+`case.json`, beside whatever is already there. Deliberately its own step rather
+than part of `--bless`: blessing accepts a change to the *output*, and
+accepting a change to what is *checked* is a separate decision.
+
+### Every report says which rectangle each table covered
+
+The question "what are we actually verifying" had no answer in the output. A
+table's spec does not hold one either: with no `endRow` it runs to the bottom
+of the sheet, and with no `columns` it spans the whole width. So the range is
+now read off the model — what was *read*, not what was asked for — and reported
+in three places.
+
+`report.md` gains a **What was verified** section listing every table layer 1
+read, with its range in each file, its width, its height and whether rows were
+matched by key or by position. Each changed table also carries its own range
+under the heading, because a finding at `B25` reads differently depending on
+whether the table starts at row 2 or row 24:
+
+```markdown
+### Currency Info · Table 2
+
+_`A18:B23` — 2 columns × 5 rows, rows matched by position_
+```
+
+`compared.xlsx` gains a banner on row 1 of every table's worksheet saying the
+same thing — bold, on a filled band the width of the table, over a rule. The
+column headers move to row 2 and the frozen pane and autofilter move with them.
+The band is light where the header under it is dark, so the two read as two
+things rather than one heavy block. `diff.json` gains `range: { base, next }`
+on every compared sheet outcome.
+
+The two files are named separately whenever they disagree. A table that grew,
+moved or lost its bottom rows between runs explains a wall of differences that
+would otherwise read as edits.
+
+### Tables printed side by side are found, and can be bounded by column
+
+A sheet was split into tables by blank rows alone. That cannot separate a
+definitions table in `H:J` from the key-value block in `A:B` beside it: both
+start on row 1, and the taller one keeps every row of the block non-blank. Read
+as one table the two header rows fuse, the shorter table's rows read as blank,
+and a key named in one of them can be found in the other. One report had four
+tables on such a sheet and two were detected.
+
+Detection now cuts a sheet by rows and by columns in turn, until neither moves —
+cutting by rows can expose a column gap that spanned the old region, and the
+other way round. A cut needs **two or more** blank columns: one is a spacer, and
+cutting on one fragments 186 blocks across a tree of 33 real cases, most of them
+wrongly. Two cuts 67, and those are genuinely two tables.
+
+New `columns` option on a sheet or table, written as a range of letters:
+
+```json
+{ "tables": { "Definitions": { "columns": "H:J", "keyColumns": ["Return Year"] } } }
+```
+
+Detection sets it when a sheet holds tables side by side, and only then — a
+stacked sheet gets no bound, since freezing a width that grows would help
+nobody. It is what stops a header row reaching across into a neighbour: without
+it the reader takes the whole width, finds the neighbour's columns hold data,
+and folds them into this table.
+
+Measured over the same tree: **37 fewer tables matched by row position**, and
+118 cells moved from layer 1 to layer 2 — caption bands like `Label A / Label B
+/ % Change` that were being read as one-row tables and are decoration, not data.
+Both layers still cover every cell; no case changed verdict. Table numbers shift
+on any sheet where this applies, so anything pinned by number wants rechecking
+with `--print-spec`.
+
+### Tuning detection: docs/detection-tuning.md
+
+How to read a run for the tables detection got wrong, recipes for the two shapes
+it reliably struggles with — a key-value block with no header row, and a data
+table under title blocks — and which parts of the configuration are positional
+rather than named, so it is clear which entries survive a report changing shape
+and which do not.
+
+## 1.1.0 — 2026-08-18
+
+Comparison gained a tolerance — `0.001` by default, applied in both layers —
+with the cells it forgives counted and listed rather than quietly dropped.
 
 ### Tolerance defaults to 0.001
 
@@ -62,7 +287,11 @@ Layer 2 compares the text a cell displays and never sees its type, so text that
 reads as a number is treated as one. Documented rather than worked around: the
 answer is to set a tolerance to the size of the rounding it absorbs.
 
-## 2026-08-18
+## 1.0.0 — 2026-08-18
+
+First release, covering everything through `ce721d0`. The changelog starts
+here, so the entries below are the last day of that work and everything
+earlier is in the git history.
 
 The comparison tree moved to `output_comparison/`, cases can be named and
 selected, and both layers stopped judging things that differ by construction.

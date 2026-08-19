@@ -78,11 +78,11 @@ test.describe('compared.xlsx value columns', () => {
     const ws = wb.worksheets.find((w) => w.name.includes('Policies'))!;
 
     const headers: string[] = [];
-    ws.getRow(1).eachCell((c, i) => { headers[i - 1] = String(c.value ?? ''); });
+    ws.getRow(2).eachCell((c, i) => { headers[i - 1] = String(c.value ?? ''); });
     const col = headers.indexOf('Golden value') + 1;
 
     const annual: string[] = [];
-    for (let row = 2; row <= ws.rowCount; row++) {
+    for (let row = 3; row <= ws.rowCount; row++) {
       if (String(ws.getRow(row).getCell(2).value ?? '') !== 'Annual Cost') continue;
       annual.push(String(ws.getRow(row).getCell(col).value ?? ''));
     }
@@ -253,12 +253,16 @@ test.describe('runCase', () => {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.readFile(r.files.differences);
 
-    for (const path of [r.files.differences, r.files.compared]) {
+    // compared.xlsx carries a caption on row 1, so its header row is row 2.
+    for (const [path, headerRow] of [
+      [r.files.differences, 1] as const,
+      [r.files.compared, 2] as const,
+    ]) {
       const book = new ExcelJS.Workbook();
       await book.xlsx.readFile(path);
       for (const ws of book.worksheets) {
         for (let c = 1; c <= 7; c++) {
-          const cell = ws.getCell(1, c);
+          const cell = ws.getCell(headerRow, c);
           if (!cell.value) continue;
           const text = (cell.font?.color as any)?.argb;
           const fill = (cell.fill as any)?.fgColor?.argb;
@@ -288,16 +292,32 @@ test.describe('runCase', () => {
     expect(wb.worksheets.map((w) => w.name)).toEqual(['Policies', 'Premiums', 'Regions']);
 
     const ws = wb.getWorksheet('Premiums')!;
-    expect(ws.getRow(1).values).toEqual([
+    // Row 1 says which rectangle of the source sheet these rows came from,
+    // and is painted as a banner rather than as a footnote -- it is the first
+    // question anyone opening the tab has.
+    const banner = ws.getRow(1);
+    expect(String(banner.getCell(1).value)).toContain('A1:D11');
+    expect(String(banner.getCell(1).value)).toContain('rows matched by key');
+    expect(banner.getCell(1).font).toMatchObject({ bold: true, size: 12 });
+    expect(banner.height).toBeGreaterThan(20);
+    // Filled the full width of the table, not just under the text.
+    for (let c = 1; c <= 7; c++) {
+      expect((ws.getCell(1, c).fill as any)?.fgColor?.argb).toBeTruthy();
+    }
+    // Light banner over dark header: the two must not read as one block.
+    const bannerFill = (ws.getCell(1, 1).fill as any).fgColor.argb;
+    const headerFill = (ws.getCell(2, 1).fill as any).fgColor.argb;
+    expect(String(bannerFill).toUpperCase()).not.toBe(String(headerFill).toUpperCase());
+    expect(ws.getRow(2).values).toEqual([
       undefined, 'Row key', 'Column', 'Golden cell', 'Actual cell',
       'Golden value', 'Actual value', 'Status',
     ]);
     // 10 rows x 4 columns, matches included -- the point of this file.
-    expect(ws.rowCount - 1).toBe(40);
-    expect(ws.views[0]).toMatchObject({ state: 'frozen', ySplit: 1 });
+    expect(ws.rowCount - 2).toBe(40);
+    expect(ws.views[0]).toMatchObject({ state: 'frozen', ySplit: 2 });
 
     const statuses = new Set<string>();
-    for (let r2 = 2; r2 <= ws.rowCount; r2++) {
+    for (let r2 = 3; r2 <= ws.rowCount; r2++) {
       statuses.add(String(ws.getRow(r2).getCell(7).value));
     }
     expect(statuses).toContain('match');
@@ -327,9 +347,10 @@ test.describe('runCase', () => {
     await wb.xlsx.readFile(r.files.compared);
     expect(wb.worksheets.map((w) => w.name)).toEqual(['Policies · Info', 'Policies · Detail']);
 
-    // The info block is 3 rows x 2 columns; the data table 5 x 5.
-    expect(wb.getWorksheet('Policies · Info')!.rowCount - 1).toBe(6);
-    expect(wb.getWorksheet('Policies · Detail')!.rowCount - 1).toBe(25);
+    // The info block is 3 rows x 2 columns; the data table 5 x 5. Two rows of
+    // preamble now: the range caption, then the column headers.
+    expect(wb.getWorksheet('Policies · Info')!.rowCount - 2).toBe(6);
+    expect(wb.getWorksheet('Policies · Detail')!.rowCount - 2).toBe(25);
   });
 
   test('non-matching cells are highlighted in compared.xlsx, matches left plain', async () => {
@@ -348,7 +369,7 @@ test.describe('runCase', () => {
 
     let painted = 0;
     let plain = 0;
-    for (let n = 2; n <= ws.rowCount; n++) {
+    for (let n = 3; n <= ws.rowCount; n++) {
       const row = ws.getRow(n);
       const status = String(row.getCell(7).value);
       const fill = (row.getCell(7).fill as any)?.fgColor?.argb;

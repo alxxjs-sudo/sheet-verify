@@ -156,13 +156,40 @@ const cell = (s: string): string => s.replace(/\|/g, '\\|').replace(/\r?\n/g, ' 
 const code = (s: string | null | undefined): string =>
   s === null || s === undefined || s === '' ? '' : `\`${cell(s).replace(/`/g, "'")}\``;
 
-function table(headers: string[], rows: string[][]): string[] {
+type Align = 'left' | 'right';
+
+function table(headers: string[], rows: string[][], align?: Align[]): string[] {
   if (!rows.length) return [];
+  const rule = (i: number) => (align?.[i] === 'right' ? '---:' : '---');
   return [
     `| ${headers.join(' | ')} |`,
-    `| ${headers.map(() => '---').join(' | ')} |`,
+    `| ${headers.map((_, i) => rule(i)).join(' | ')} |`,
     ...rows.map((r) => `| ${r.join(' | ')} |`),
   ];
+}
+
+/**
+ * Where a table is and how it was matched, in one line.
+ *
+ * The range is the rectangle layer 1 read, not the one the spec asked for: a
+ * spec with no `endRow` runs to the bottom of the sheet and answers nothing.
+ * When the two files disagree about it, both are shown -- a table that grew,
+ * moved or lost its bottom rows between runs is worth seeing as such, and it
+ * explains a wall of differences that would otherwise look like edits.
+ */
+function coverage(s: SheetOutcome): string {
+  if (!s.range?.base) return '';
+  const where = s.range.next && s.range.next !== s.range.base
+    ? `${code(s.range.base)} in the golden, ${code(s.range.next)} in the report`
+    : code(s.range.base);
+  const plural = (count: number, noun: string) =>
+    `${n(count)} ${noun}${count === 1 ? '' : 's'}`;
+  const shape = s.diff
+    ? ` — ${plural(s.diff.schema.compared.length, 'column')}` +
+      ` × ${plural(s.diff.rows.compared, 'row')}, ` +
+      `rows matched by ${s.reason ? 'position' : 'key'}`
+    : '';
+  return `_${where}${shape}_`;
 }
 
 /**
@@ -508,6 +535,10 @@ export function formatMarkdownReport(
     out.push('', '## What changed', '');
     for (const s of failed) {
       out.push('', `### ${cell(s.label)}`);
+      // Where the table is, before what is wrong with it. A finding at B25 is
+      // read differently depending on whether the table starts at row 2 or 24.
+      const where = coverage(s);
+      if (where) out.push('', where);
       // Every changed table gets one, whether or not the tolerance forgave
       // anything here: the same three columns in the same place under every
       // heading is what makes them comparable at a glance.
@@ -638,6 +669,28 @@ export function formatMarkdownReport(
         ]),
       ));
     }
+    out.push('', '</details>');
+  }
+
+  if (compared.length) {
+    out.push('', `## What was verified (${compared.length})`, '');
+    out.push('Every table layer 1 read, and the rectangle it read. This is the answer to');
+    out.push('"what does this run actually cover" -- a table missing from here was never');
+    out.push('compared by name and key, whatever else the report says about it.');
+    out.push('');
+    out.push('<details><summary>Show the tables</summary>', '');
+    out.push(...table(
+      ['table', 'golden', 'report', 'columns', 'rows', 'rows matched by'],
+      compared.map((s) => [
+        cell(s.label),
+        code(s.range?.base ?? ''),
+        s.range && s.range.next !== s.range.base ? code(s.range.next) : 'same',
+        n(s.diff!.schema.compared.length),
+        n(s.diff!.rows.compared),
+        s.reason ? 'position' : 'key',
+      ]),
+      ['left', 'left', 'left', 'right', 'right', 'left'],
+    ));
     out.push('', '</details>');
   }
 

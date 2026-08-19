@@ -2,7 +2,8 @@ import type {
   DiffResult, MovedSheet, ResolvedSpec, SheetModel, SheetOutcome, TableRequest, TableSpec,
   WorkbookDiffResult, WorkbookReader, WorkbookSheetSpec, WorkbookSpec,
 } from './types.js';
-import { resolveSpec } from './model.js';
+import { resolveSpec, tableRange } from './model.js';
+import { columnRange } from './a1.js';
 import { compare } from './compare.js';
 import { readerFor } from './verify.js';
 import { metadataAddressesFor, parseMetadata } from './metadata.js';
@@ -146,6 +147,18 @@ function entryFor(
  */
 const positionalFallback = (spec: WorkbookSpec) => spec.matchUnkeyedRowsByPosition ?? true;
 
+/**
+ * Whether two tables occupy any column in common. Unbounded means the whole
+ * width, so a table with no `columns` shares them with everything -- which is
+ * right: on a sheet nobody has split by column, every table is under the last.
+ */
+function sharesColumns(a: WorkbookSheetSpec, b: WorkbookSheetSpec): boolean {
+  if (!a.columns || !b.columns) return true;
+  const x = columnRange(a.columns, 0);
+  const y = columnRange(b.columns, 0);
+  return x.from <= y.to && y.from <= x.to;
+}
+
 /** Resolves one sheet's spec, or null when it has no key and cannot be compared. */
 export function resolveSheetSpec(spec: WorkbookSpec, sheet: string): ResolvedSpec | null {
   const merged = sheetSpecFor(spec, sheet);
@@ -210,7 +223,11 @@ export function resolveTables(spec: WorkbookSpec, sheet: string): ResolvedTable[
     .sort((a, b) => (a.merged.headerRow ?? 1) - (b.merged.headerRow ?? 1));
 
   return ordered.map((entry, i) => {
-    const next = ordered[i + 1];
+    // The next table *in the same columns*. A sheet that prints two tables
+    // side by side has one starting below another without being under it, and
+    // bounding a table at a neighbour's header row would cut it off at the
+    // neighbour's first row for no reason.
+    const next = ordered.slice(i + 1).find((o) => sharesColumns(entry.merged, o.merged));
     // An explicit endRow wins; otherwise stop just above the next table.
     const endRow = entry.merged.endRow ?? (next ? (next.merged.headerRow ?? 1) - 1 : 0);
     const keyColumns = entry.merged.keyColumns;
@@ -232,6 +249,47 @@ export function resolveTables(spec: WorkbookSpec, sheet: string): ResolvedTable[
           : 'no keyColumns configured for this table',
     };
   });
+}
+
+/**
+ * Checks `expect` against what layer 1 actually compared.
+ *
+ * A miss is an integrity error rather than a review item, deliberately: the
+ * whole point is that coverage shrinking should stop a run, and a review item
+ * would leave it green. Nothing about the comparison changes either way --
+ * this reads the outcome, it does not steer it.
+ */
+function expectationErrors(spec: WorkbookSpec, outcomes: SheetOutcome[]): string[] {
+  if (!spec.expect) return [];
+  const out: string[] = [];
+
+  for (const [name, want] of Object.entries(spec.expect)) {
+    const on = outcomes.filter(
+      (o) => o.status === 'compared' && canonSheet(o.sheet) === canonSheet(name),
+    );
+
+    if (typeof want === 'number') {
+      if (on.length !== want) {
+        out.push(
+          `${name}: expected ${want} table(s) compared by name and key, found ${on.length}`,
+        );
+      }
+      continue;
+    }
+
+    // Ranges are a set, not a sequence: a sheet whose tables are found in a
+    // different order is not a finding, and one whose table moved is.
+    const found = on.map((o) => o.range?.base ?? '(none)');
+    const missing = want.filter((w) => !found.includes(w));
+    const extra = found.filter((f) => !want.includes(f));
+    if (!missing.length && !extra.length) continue;
+
+    const bits = [`${name}: expected ${want.length} table(s), compared ${found.length}`];
+    if (missing.length) bits.push(`not compared: ${missing.join(', ')}`);
+    if (extra.length) bits.push(`unexpected: ${extra.join(', ')}`);
+    out.push(bits.join(' — '));
+  }
+  return out;
 }
 
 /**
@@ -379,7 +437,13 @@ export async function runWorkbook(
       });
       // The reason carries through for a compared table too, so a table
       // matched by position rather than by key says so in the report.
-      outcomes.push({ sheet, table, label, status: 'compared', diff, reason: t.reason });
+      outcomes.push({
+        sheet, table, label, status: 'compared', diff, reason: t.reason,
+        range: {
+          base: tableRange(baseModel, t.spec.headerRow),
+          next: tableRange(nextModel, t.spec.headerRow),
+        },
+      });
     }
   }
 
@@ -402,6 +466,8 @@ export async function runWorkbook(
   for (const stray of strayEntries(spec, present)) {
     errors.push(`spec configures sheet "${stray}", which exists in neither file`);
   }
+
+  errors.push(...expectationErrors(spec, outcomes));
 
   const skipped = outcomes.filter((o) => o.status === 'skipped');
   const defects =

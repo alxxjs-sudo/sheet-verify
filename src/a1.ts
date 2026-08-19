@@ -25,6 +25,31 @@ export function numToCol(n: number): string {
   return s;
 }
 
+/**
+ * A table's column bound, written the way a spreadsheet writes one: `"H:J"`,
+ * or `"H"` for a single column. An empty string means every column, which is
+ * what a sheet holding one table needs and is therefore the default.
+ *
+ * Returned inclusive and 1-based, to match everything else that talks about
+ * columns here. A range written backwards is read the way it was meant.
+ */
+export function columnRange(range: string, width: number): { from: number; to: number } {
+  const all = { from: 1, to: width };
+  const text = range.trim().toUpperCase();
+  if (!text) return all;
+
+  const m = /^([A-Z]+)(?::([A-Z]+))?$/.exec(text);
+  if (!m) {
+    throw new Error(
+      `sheet-verify: "${range}" is not a column range. Write it as letters, ` +
+      'either one column ("H") or a span ("H:J").',
+    );
+  }
+  const a = colToNum(m[1]!);
+  const b = m[2] ? colToNum(m[2]) : a;
+  return { from: Math.min(a, b), to: Math.max(a, b) };
+}
+
 const MAX_COL = 16384; // XFD
 const MAX_ROW = 1048576;
 

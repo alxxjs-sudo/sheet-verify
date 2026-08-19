@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { mkdir, readFile } from 'node:fs/promises';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
-import { detectWorkbook, openWorkbook, withoutDrawings } from '../src/index.js';
+import { detectWorkbook, openWorkbook, verifyWorkbook, withoutDrawings } from '../src/index.js';
 import { DIR } from './fixtures.js';
 
 /**
@@ -125,6 +125,62 @@ test.describe('a table under a title row', () => {
     expect(t.headers.filter(Boolean)).toEqual(['Contract ID', 'Company', 'Layer', 'Loss']);
     expect(t.rows).toBe(3);
     expect(t.keyColumns).toEqual(['Contract ID']);
+  });
+
+  test('a column bound keeps a neighbour table out of the one beside it', async () => {
+    // The failure this prevents is quiet: with no bound, the reader takes the
+    // header row across the whole width, finds the neighbour's columns hold
+    // data, and folds them into this table under names of their own.
+    await mkdir(DIR, { recursive: true });
+    const build = async (name: string, drift: number) => {
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Info');
+      ws.getCell('A1').value = 'Field';
+      ws.getCell('B1').value = 'Value';
+      ws.getCell('A2').value = 'Release';
+      ws.getCell('B2').value = '4.2.0';
+      ws.getCell('A3').value = 'Rate';
+      ws.getCell('B3').value = 1 + drift;
+
+      ws.getCell('F1').value = 'Band';
+      ws.getCell('G1').value = 'Limit';
+      ws.getCell('F2').value = 'A';
+      ws.getCell('G2').value = 100;
+      ws.getCell('F3').value = 'B';
+      ws.getCell('G3').value = 200;
+
+      const path = join(DIR, name);
+      await wb.xlsx.writeFile(path);
+      return path;
+    };
+
+    const golden = await build('rs-bound-golden.xlsx', 0);
+    const actual = await build('rs-bound-actual.xlsx', 1);
+
+    const bounded = await verifyWorkbook(golden, actual, {
+      sheets: {
+        Info: {
+          tables: {
+            Left: { headerRow: 1, endRow: 3, columns: 'A:B', keyColumns: ['Field'] },
+            Right: { headerRow: 1, endRow: 3, columns: 'F:G', keyColumns: ['Band'] },
+          },
+        },
+      },
+    });
+
+    const left = bounded.sheets.find((s) => s.table === 'Left')!;
+    expect(left.diff!.schema.compared).toEqual(['Field', 'Value']);
+    expect(left.diff!.values.map((v) => v.address)).toEqual(['B3']);
+
+    const right = bounded.sheets.find((s) => s.table === 'Right')!;
+    expect(right.diff!.schema.compared).toEqual(['Band', 'Limit']);
+    expect(right.diff!.values).toHaveLength(0);
+
+    // Without the bound, the left table reaches into the right one's columns.
+    const fused = await verifyWorkbook(golden, actual, {
+      sheets: { Info: { headerRow: 1, endRow: 3, keyColumns: ['Field'] } },
+    });
+    expect(fused.sheets[0]!.diff!.schema.compared).toContain('Limit');
   });
 
   test('a header on the first row of its block is still preferred over its data', async () => {

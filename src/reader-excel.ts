@@ -3,7 +3,7 @@ import type {
   CellKind, CellValue, ResolvedSpec, SheetModel, TableRequest, WorkbookReader,
 } from './types.js';
 import { buildModel, type RawCell } from './model.js';
-import { numToCol } from './a1.js';
+import { columnRange, numToCol } from './a1.js';
 import { openWorkbook } from './open-xlsx.js';
 
 /** ExcelJS ValueType numeric enum. */
@@ -90,7 +90,12 @@ function modelFrom(ws: ExcelJS.Worksheet, path: string, spec: ResolvedSpec): She
   const headers: { name: string; colNum: number }[] = [];
   const headerRow = ws.getRow(spec.headerRow);
 
-  for (let colNum = 1; colNum <= ws.columnCount; colNum++) {
+  // A table can be bounded left and right as well as top and bottom, for a
+  // sheet that puts two of them side by side. Unbounded is the default and
+  // means the whole width.
+  const { from, to } = columnRange(spec.columns, ws.columnCount);
+
+  for (let colNum = from; colNum <= Math.min(to, ws.columnCount); colNum++) {
     const name = headerName(headerRow.getCell(colNum));
     if (name) {
       headers.push({ name, colNum });
@@ -107,7 +112,10 @@ function modelFrom(ws: ExcelJS.Worksheet, path: string, spec: ResolvedSpec): She
   }
 
   if (!headers.length) {
-    throw new Error(`sheet-verify: no headers found on row ${spec.headerRow} of "${ws.name}" in ${path}`);
+    const where = spec.columns ? ` in columns ${spec.columns}` : '';
+    throw new Error(
+      `sheet-verify: no headers found on row ${spec.headerRow}${where} of "${ws.name}" in ${path}`,
+    );
   }
 
   const rows: { rowNum: number; cells: Map<number, RawCell> }[] = [];

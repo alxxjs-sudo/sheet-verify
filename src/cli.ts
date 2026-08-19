@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-import { readdir, readFile, rm, stat } from 'node:fs/promises';
+import { readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { runCase, type CaseOptions } from './case.js';
 import { detectSpec } from './detect.js';
 import { summarizeSweep } from './sweep.js';
 import { makeBare, cachedValueState } from './bare.js';
+import { proposeMeta } from './propose.js';
 import { mergeSheetSpec } from './workbook.js';
 import type { LedgerScope } from './ledger.js';
-import type { WorkbookSheetSpec, WorkbookSpec } from './types.js';
+import type { WorkbookDiffResult, WorkbookSheetSpec, WorkbookSpec } from './types.js';
 
 /**
  * Compares report folders. Put the golden output and the new report in a
@@ -31,6 +32,8 @@ interface Args {
   target: string;
   bless: boolean;
   printSpec: boolean;
+  writeMeta: boolean;
+  writeExpect: boolean;
   ledger: LedgerScope;
   sweep: boolean;
   bare: boolean;
@@ -39,14 +42,16 @@ interface Args {
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
-    target: '', bless: false, printSpec: false, ledger: 'differences',
-    sweep: true, bare: false, help: false,
+    target: '', bless: false, printSpec: false, writeMeta: false, writeExpect: false,
+    ledger: 'differences', sweep: true, bare: false, help: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === '-h' || a === '--help') args.help = true;
     else if (a === '--bless' || a === '--update') args.bless = true;
     else if (a === '--print-spec') args.printSpec = true;
+    else if (a === '--write-meta') args.writeMeta = true;
+    else if (a === '--write-expect') args.writeExpect = true;
     else if (a === '--no-sweep') args.sweep = false;
     else if (a === '--bare') args.bare = true;
     else if (a === '--ledger') args.ledger = argv[++i] as LedgerScope;
@@ -176,6 +181,10 @@ OPTIONS
                      exit. Run after editing a report by hand
   --print-spec       print the detected layout as JSON and exit, so it can be
                      saved as case.json and edited
+  --write-meta       write a starting meta.json for a report type, from the
+                     pairs themselves, instead of typing one out
+  --write-expect     record what each case verified into its case.json, so a
+                     table that later stops being compared fails the run
   --ledger <scope>   all | differences | none      (default: differences)
   --no-sweep         skip layer 2. Saves a second parse of both files
   -h, --help         this text
@@ -379,7 +388,7 @@ export async function findRoot(target: string): Promise<string> {
 const CONFIG_KEYS = new Set([
   'defaults', 'sheets', 'ignoreSheets', 'metadata', 'strictSheets',
   'matchUnkeyedRowsByPosition', 'cases',
-  'label', 'reportType', 'source', '//',
+  'label', 'reportType', 'source', 'expect', '//',
 ]);
 
 /**
@@ -460,11 +469,51 @@ export async function configLayers(root: string, dir: string): Promise<ConfigLay
   return layers;
 }
 
+/**
+ * Keeps the table a sheet already had when a layer above adds one to it.
+ *
+ * A sheet holding a single table carries its `headerRow` and key at the sheet
+ * level, with no `tables` block -- that is what makes reports read "Policies"
+ * rather than "Policies · Table 1". Declaring `tables` on such a sheet used to
+ * *replace* it: writing one entry to check a title block also stopped the
+ * sheet's real table being compared, and nothing said so. Adding a table has
+ * to mean adding a table.
+ *
+ * Only fires when the layer above declares tables and the one below has none,
+ * so a sheet-level `keyColumns` written on its own -- the common correction,
+ * and the one in every example -- behaves exactly as it did.
+ *
+ * The existing table is filed under the sheet's own name, which is the name
+ * reports already give it.
+ */
+function namedTables(
+  sheet: string,
+  under: WorkbookSheetSpec | undefined,
+  override: WorkbookSheetSpec,
+): WorkbookSheetSpec | undefined {
+  if (!under || under.tables || !override.tables) return under;
+  if (under.headerRow === undefined && !under.keyColumns?.length) return under;
+
+  const { headerRow, endRow, columns, keyColumns, ...rest } = under;
+  return {
+    ...rest,
+    tables: {
+      [sheet]: {
+        ...(headerRow === undefined ? {} : { headerRow }),
+        ...(endRow === undefined ? {} : { endRow }),
+        ...(columns === undefined ? {} : { columns }),
+        ...(keyColumns === undefined ? {} : { keyColumns }),
+      },
+    },
+  };
+}
+
 function mergeSpecs(base: WorkbookSpec, given: WorkbookSpec): WorkbookSpec {
   const sheets: Record<string, WorkbookSheetSpec> = { ...base.sheets };
   for (const [name, override] of Object.entries(given.sheets ?? {})) {
     const found = Object.keys(sheets).find((k) => k.toLowerCase() === name.toLowerCase());
-    sheets[found ?? name] = mergeSheetSpec(found ? sheets[found] : undefined, override);
+    const under = found ? sheets[found] : undefined;
+    sheets[found ?? name] = mergeSheetSpec(namedTables(found ?? name, under, override), override);
   }
   const merged: WorkbookSpec = { ...base, ...given, sheets };
   if (base.defaults || given.defaults) {
@@ -474,6 +523,11 @@ function mergeSpecs(base: WorkbookSpec, given: WorkbookSpec): WorkbookSpec {
     // Additive: a type excluding its glossary and a case excluding one more
     // should end up excluding both.
     merged.ignoreSheets = [...new Set([...(base.ignoreSheets ?? []), ...(given.ignoreSheets ?? [])])];
+  }
+  if (base.expect || given.expect) {
+    // Per sheet, like `sheets`: a case naming what one sheet should hold must
+    // not delete the report type's expectations for every other sheet.
+    merged.expect = { ...base.expect, ...given.expect };
   }
   if (base.metadata || given.metadata) {
     // Additive for the same reason: a report type naming its own header block
@@ -510,6 +564,29 @@ async function calcSkew(c: Case): Promise<string | null> {
     // Diagnosing the inputs must never be what stops a run.
     return null;
   }
+}
+
+/**
+ * Records what a run verified into the case's own case.json, as `expect`.
+ *
+ * Ranges, one per table, keyed by sheet -- read off the outcome rather than
+ * off the config, so it is a statement about what happened. The rest of the
+ * file is left exactly as it was: this is written into a file people also
+ * write by hand, and losing a label or a note to a generated key would be a
+ * poor trade for the guard it buys.
+ */
+async function writeExpectations(dir: string, diff: WorkbookDiffResult): Promise<number> {
+  const expect: Record<string, string[]> = {};
+  for (const o of diff.sheets) {
+    if (o.status !== 'compared' || !o.range?.base) continue;
+    (expect[o.sheet] ??= []).push(o.range.base);
+  }
+
+  const path = join(dir, 'case.json');
+  const existing = (await readJson(path)) ?? {};
+  const text = JSON.stringify({ ...existing, expect }, null, 2);
+  await writeFile(path, text.endsWith('\n') ? text : `${text}\n`, 'utf8');
+  return Object.keys(expect).length;
 }
 
 /** Detection, then every configuration layer over it in order. */
@@ -681,6 +758,34 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  if (args.writeMeta) {
+    const path = join(target, 'meta.json');
+    const existing = await readJson(path).catch(() => ({} as WorkbookSpec));
+    const settings = Object.keys(existing ?? {}).filter((k) => !k.startsWith('//'));
+    if (settings.length) {
+      // Refusing rather than merging. A generated file and a hand-written one
+      // are different kinds of thing, and quietly folding one into the other
+      // is how a setting somebody meant disappears.
+      console.error([
+        `sheet-verify: ${DISPLAY(relative(root, path))} already has settings in it: `
+        + `${settings.join(', ')}.`,
+        '  Move it aside and run this again to see what would be written,',
+        '  or keep the file you have and add to it by hand.',
+      ].join('\n'));
+      return 1;
+    }
+
+    console.log(`sheet-verify: reading ${found.length} case(s) under ${DISPLAY(relative(root, target)) || '.'}`);
+    const proposal = await proposeMeta(target, found);
+    await writeFile(path, proposal.json, 'utf8');
+
+    console.log('');
+    for (const line of proposal.notes) console.log(`  ${line}`);
+    console.log('');
+    console.log(`written to ${DISPLAY(relative(root, path))} — read it before trusting it.`);
+    return 0;
+  }
+
   if (args.printSpec) {
     for (const c of found) {
       const layers = await configLayers(root, c.dir);
@@ -760,6 +865,16 @@ async function main(): Promise<number> {
       // The report is where the detail is, so its path goes last: either the
       // run found something, or it found something nobody had asked about.
       if (!result.blessed && (!result.ok || gaps)) lines.push(result.files.report);
+
+      // Recorded from the run rather than from the config, so it says what was
+      // verified and not what somebody hoped would be. Deliberately its own
+      // step and not folded into --bless: blessing accepts a change to the
+      // output, and accepting a change to what is *checked* is a separate
+      // decision that deserves to be made on purpose.
+      if (args.writeExpect && result.diff) {
+        const written = await writeExpectations(c.dir, result.diff);
+        lines.push(`expectations recorded for ${written} sheet(s) in case.json`);
+      }
 
       console.log(`${result.ok ? '✓' : '✗'} ${head}`);
       for (const line of lines) console.log(`    ${line}`);

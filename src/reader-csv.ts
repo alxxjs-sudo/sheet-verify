@@ -4,7 +4,7 @@ import type {
   CellValue, CsvDialect, ResolvedSpec, SheetModel, TableRequest, WorkbookReader,
 } from './types.js';
 import { buildModel, type RawCell } from './model.js';
-import { numToCol } from './a1.js';
+import { columnRange, numToCol } from './a1.js';
 
 /** Guards against turning identifiers like "0012" or "1-2" into numbers. */
 const STRICT_NUMBER = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?$/;
@@ -75,9 +75,14 @@ export class CsvReader implements WorkbookReader {
       throw new Error(`sheet-verify: no header row at line ${spec.headerRow} of ${path}`);
     }
 
+    // A CSV holds one table, so a column bound is rarely useful here -- but the
+    // option is on the shared spec, and silently ignoring one that was written
+    // would be worse than honouring it.
+    const bound = columnRange(spec.columns, headerLine.length);
+
     const headers = headerLine
       .map((name, i) => ({ name: String(name ?? '').trim(), colNum: i + 1 }))
-      .filter((h) => h.name !== '');
+      .filter((h) => h.name !== '' && h.colNum >= bound.from && h.colNum <= bound.to);
 
     const rows = records.slice(spec.headerRow).map((rec, i) => {
       const cells = new Map<number, RawCell>();

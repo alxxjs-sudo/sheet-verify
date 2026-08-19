@@ -2,7 +2,7 @@ import ExcelJS from 'exceljs';
 import type { Cell, CellValue, ResolvedSpec } from './types.js';
 import type { ComparedTable } from './workbook.js';
 import {
-  canonHeader, displayKey, equalValues, rowKeyMatcher, toleranceFor,
+  canonHeader, displayKey, equalValues, rowKeyMatcher, tableRange, toleranceFor,
 } from './model.js';
 
 /**
@@ -337,8 +337,21 @@ const MUTED = 'FF6B7280';
 const HEADER_FILL = 'FF1F2937';
 const HEADER_TEXT = 'FFFFFFFF';
 
-function styleHeader(ws: ExcelJS.Worksheet, columns: number): void {
-  const row = ws.getRow(1);
+/**
+ * The caption above the header, saying which rectangle of the source sheet a
+ * worksheet covers. Painted as a banner rather than as a note: it answers the
+ * first question anyone opening this tab has, and set small and grey it read
+ * as a footnote to the header below it.
+ *
+ * Light fill and dark text, the inverse of the header band under it, so the
+ * two read as two different things at a glance instead of as one heavy block.
+ */
+const BANNER_FILL = 'FFFEF3C7';
+const BANNER_TEXT = 'FF713F12';
+const BANNER_RULE = 'FFD9A441';
+
+function styleHeader(ws: ExcelJS.Worksheet, columns: number, at = 1): void {
+  const row = ws.getRow(at);
   row.font = { bold: true, color: { argb: HEADER_TEXT } };
   row.alignment = { vertical: 'middle' };
   row.height = 20;
@@ -507,8 +520,38 @@ export async function writeComparedWorkbook(
 
   for (const t of tables) {
     const name = worksheetName(t.label, used);
-    const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
+    const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 2 }] });
     COMPARED_COLUMNS.forEach((c, i) => { ws.getColumn(i + 1).width = c.width; });
+
+    // A caption above the header, saying which rectangle of the source sheet
+    // these rows came from. Without it a tab of six hundred addresses gives no
+    // way to tell what the table covered -- or that it stopped short of where
+    // the data does. Both sides are named when they disagree, because a table
+    // that moved or grew between runs explains a wall of differences that
+    // would otherwise read as edits.
+    const from = tableRange(t.base, t.spec.headerRow);
+    const to = tableRange(t.next, t.spec.headerRow);
+    const where = from === to ? from : `golden ${from}, report ${to}`;
+    const plural = (count: number, noun: string) =>
+      `${count} ${noun}${count === 1 ? '' : 's'}`;
+    const banner = ws.addRow([
+      `${t.label} — ${where || 'no columns read'}` +
+      ` · ${plural(t.diff.schema.compared.length, 'column')}` +
+      ` × ${plural(t.diff.rows.compared, 'row')}` +
+      ` · rows matched by ${t.spec.matchRowsByPosition ? 'position' : 'key'}`,
+    ]);
+    banner.font = { bold: true, size: 12, color: { argb: BANNER_TEXT } };
+    banner.height = 30;
+    banner.alignment = { vertical: 'middle', indent: 1 };
+    // Merged and filled across the full width, so the band is the width of the
+    // table it describes rather than of the text that happens to be in it.
+    ws.mergeCells(1, 1, 1, COMPARED_COLUMNS.length);
+    for (let c = 1; c <= COMPARED_COLUMNS.length; c++) {
+      const cellAt = banner.getCell(c);
+      cellAt.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BANNER_FILL } };
+      cellAt.border = { bottom: { style: 'thin', color: { argb: BANNER_RULE } } };
+    }
+
     ws.addRow(COMPARED_COLUMNS.map((c) => c.header));
 
     const statusCol = COMPARED_COLUMNS.findIndex((c) => c.key === 'status') + 1;
@@ -544,8 +587,8 @@ export async function writeComparedWorkbook(
       n++;
     }
 
-    ws.autoFilter = { from: 'A1', to: { row: 1, column: COMPARED_COLUMNS.length } };
-    styleHeader(ws, COMPARED_COLUMNS.length);
+    ws.autoFilter = { from: 'A2', to: { row: 2, column: COMPARED_COLUMNS.length } };
+    styleHeader(ws, COMPARED_COLUMNS.length, 2);
     counts[name] = n;
   }
 

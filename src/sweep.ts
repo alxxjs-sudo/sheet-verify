@@ -2,7 +2,7 @@ import { extname } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { parse } from 'csv-parse/sync';
 import ExcelJS from 'exceljs';
-import { numToCol } from './a1.js';
+import { columnRange, numToCol } from './a1.js';
 import { addressOf, impactOf, type FormulaCell } from './impact.js';
 import { canonHeader, toleranceFor } from './model.js';
 import { metadataOn, parseMetadata, type MetadataRules } from './metadata.js';
@@ -418,6 +418,9 @@ interface ToleranceBand {
   label: string;
   from: number;
   to: number;
+  /** Column bounds, for a sheet whose tables sit side by side. */
+  fromCol: number;
+  toCol: number;
   /** Per column number, resolved from the column's own name. */
   byCol: Map<number, number>;
   /** The table's `*` entry, for a column inside its rows but not in its headers. */
@@ -444,10 +447,15 @@ function toleranceBandsOf(compared: ComparedTable[]): Map<string, ToleranceBand[
     if (!byCol.size && star === 0) continue;
     const key = canon(t.sheet);
     const bands = out.get(key) ?? [];
+    // A table bounded left and right shares its rows with the table beside it,
+    // so rows alone no longer identify which one a cell belongs to.
+    const cols = columnRange(t.spec.columns, 0);
     bands.push({
       label: t.label,
       from: t.spec.headerRow,
       to: t.spec.endRow > 0 ? t.spec.endRow : Number.MAX_SAFE_INTEGER,
+      fromCol: t.spec.columns ? cols.from : 1,
+      toCol: t.spec.columns ? cols.to : Number.MAX_SAFE_INTEGER,
       byCol,
       star,
     });
@@ -460,8 +468,11 @@ const bandAt = (
   bands: Map<string, ToleranceBand[]>,
   sheet: string,
   row: number,
+  column: number,
 ): ToleranceBand | undefined =>
-  bands.get(canon(sheet))?.find((b) => row >= b.from && row <= b.to);
+  bands.get(canon(sheet))?.find(
+    (b) => row >= b.from && row <= b.to && column >= b.fromCol && column <= b.toCol,
+  );
 
 const toleranceIn = (band: ToleranceBand | undefined, fallback: number, col: number): number =>
   band ? band.byCol.get(col) ?? band.star : fallback;
@@ -711,7 +722,7 @@ export async function sweep(
       // A gap the reader has already said does not matter. Counted and listed
       // on its own rather than folded into the differences, so a tolerance
       // quiets the report without quietly editing what the run found.
-      const band = bandAt(tolerances, sheet, row);
+      const band = bandAt(tolerances, sheet, row, column);
       const tol = toleranceIn(band, fallbackTolerance, column);
       if (withinTolerance(b, n, tol)) {
         tolerated++;

@@ -74,6 +74,22 @@ export interface SheetSpec {
    */
   endRow?: number;
   /**
+   * Columns this table occupies, as a range of letters: `"H:J"`. Default `""`,
+   * meaning every column on the sheet.
+   *
+   * Reports put tables side by side -- a definitions table in H:J beside a
+   * key-value block in A:B, both starting on row 1. A blank row cannot
+   * separate those, so without a column bound they are read as one table:
+   * the two header rows fuse, the shorter table's rows read as blank, and a
+   * key named in one of them can be found in the other. Set for you when
+   * detection sees a gap of blank columns wide enough to be a separation
+   * rather than a spacer.
+   *
+   * Only the named columns are read. Everything outside is another table's,
+   * or nobody's.
+   */
+  columns?: string;
+  /**
    * Column(s) forming the row identity. Multiple columns form a composite key.
    * Rows with a blank key are skipped.
    */
@@ -414,6 +430,34 @@ export interface WorkbookSpec {
    */
   cases?: string[];
 
+  /**
+   * What each sheet should hold, checked after the comparison and failed when
+   * it does not hold. Keyed by worksheet name; either the number of tables
+   * layer 1 should have compared there, or the A1 ranges it should have
+   * covered.
+   *
+   *   { "expect": { "Report Info": ["A2:B17", "H2:J22", "A19:B24"], "Cover": 1 } }
+   *
+   * This is the counterpart to detection being a guess. Detection is re-made
+   * from the files on every run, which is what lets a report change shape
+   * without breaking the config -- and it means a table can stop being
+   * compared without anything failing. The only signal is a smaller number in
+   * a summary line nobody was watching. On one report here an entire block
+   * went unread by layer 1 for the life of the tool, and it took someone
+   * opening the spreadsheet and counting to find out.
+   *
+   * Written once from the "What was verified" section of a report, it turns
+   * that into a failure with a name.
+   *
+   * It is an assertion, never an instruction: it changes nothing about what is
+   * compared, so an entry that is wrong stops the run and says so rather than
+   * quietly comparing the wrong thing -- which is exactly what pinning a
+   * `headerRow` does when a report shifts. Ranges belong in a case.json, since
+   * they describe two particular files; a count often holds for a whole report
+   * type and can go in its meta.json.
+   */
+  expect?: Record<string, number | string[]>;
+
   /* --- labelling: says what a case is, changes nothing about the run ------ */
 
   /**
@@ -462,6 +506,17 @@ export interface SheetOutcome {
   status: SheetStatus;
   /** Set only when status is 'compared'. */
   diff?: DiffResult;
+  /**
+   * The rectangle layer 1 read, per file, as A1 ranges: "H2:J22". Set only
+   * when status is 'compared'.
+   *
+   * What was covered is a different question from what was configured, and the
+   * one people actually ask: a spec with no `endRow` runs to the bottom of the
+   * sheet and says nothing about where the table stopped. The two sides are
+   * kept apart because they can differ, and a table that grew or moved between
+   * runs is worth seeing as such.
+   */
+  range?: { base: string; next: string };
   /** Why the sheet was not compared. */
   reason?: string;
 }

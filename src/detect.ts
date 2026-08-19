@@ -5,6 +5,7 @@ import { parse } from 'csv-parse/sync';
 import type { WorkbookSpec, WorkbookSheetSpec } from './types.js';
 import { CSV_SHEET } from './reader-csv.js';
 import { headerName } from './reader-excel.js';
+import { numToCol } from './a1.js';
 import { openWorkbook } from './open-xlsx.js';
 
 /**
@@ -20,10 +21,27 @@ export interface DetectedTable {
   headerRow: number;
   /** 0 when the table runs to the last row. */
   endRow: number;
+  /**
+   * Columns the table occupies, as a range of letters: "H:J". Always set, and
+   * only worth carrying into a spec when the sheet holds tables side by side.
+   */
+  columns: string;
+  /** Where it sits in the grid, 0-based. Used to order and bound the tables. */
+  region: Region;
   headers: string[];
   /** Null when no column or pair of columns identifies a row. */
   keyColumns: string[] | null;
   rows: number;
+  /**
+   * How many data rows hold something, per column, positionally aligned with
+   * `headers`. A column written on a handful of rows out of hundreds is a
+   * group heading rather than a column with gaps -- which is the shape
+   * `fillKeyDown` exists for, and worth being able to point at rather than
+   * assume.
+   */
+  filledPerColumn: number[];
+  /** Whether the table's first data row holds something, per column. */
+  firstRowFilled: boolean[];
 }
 
 export interface DetectedSheet {
@@ -128,11 +146,119 @@ export function detectKeyColumns(headers: string[], rows: string[][]): string[] 
   return null;
 }
 
+/** A rectangle of the grid, 0-based and inclusive on every side. */
+export interface Region {
+  r0: number;
+  r1: number;
+  c0: number;
+  c1: number;
+}
+
 /**
- * Splits a sheet into tables. A table is a run of consecutive non-blank rows
- * whose first row reads as headers; a blank row ends it. That is what
- * separates an "output info" block from the data table below it, without
- * anyone counting rows.
+ * How many blank columns it takes to separate two tables rather than decorate
+ * one.
+ *
+ * A single blank column is a spacer, and a common one: a dimension breakdown
+ * carries an unnamed column between its labels and its measures, and one report
+ * here leaves a blank column in the middle of an eighteen-column table. Cutting
+ * on one blank column fragments 186 blocks across this tree, most of them
+ * wrongly. Requiring two cuts 67, and the ones it cuts are genuinely two tables
+ * -- a definitions table in H:J beside a key-value block in A:B, with five
+ * empty columns between them.
+ */
+const COLUMN_GAP = 2;
+
+/** Whether any cell of a row within the given columns holds something. */
+const rowUsed = (grid: string[][], r: number, c0: number, c1: number): boolean => {
+  const row = grid[r] ?? [];
+  for (let c = c0; c <= c1; c++) if (!isBlank(row[c])) return true;
+  return false;
+};
+
+/** Whether any cell of a column within the given rows holds something. */
+const colUsed = (grid: string[][], c: number, r0: number, r1: number): boolean => {
+  for (let r = r0; r <= r1; r++) if (!isBlank((grid[r] ?? [])[c])) return true;
+  return false;
+};
+
+/** Splits a region into the runs of rows that hold something. */
+function byRows(grid: string[][], reg: Region): Region[] {
+  const out: Region[] = [];
+  let start = -1;
+  for (let r = reg.r0; r <= reg.r1; r++) {
+    const used = rowUsed(grid, r, reg.c0, reg.c1);
+    if (used && start === -1) start = r;
+    if (!used && start !== -1) {
+      out.push({ ...reg, r0: start, r1: r - 1 });
+      start = -1;
+    }
+  }
+  if (start !== -1) out.push({ ...reg, r0: start, r1: reg.r1 });
+  return out;
+}
+
+/**
+ * Splits a region wherever COLUMN_GAP or more blank columns run through it.
+ * Leading and trailing blank columns are trimmed off whatever is left.
+ */
+function byColumns(grid: string[][], reg: Region): Region[] {
+  const out: Region[] = [];
+  let start = -1;
+  let gap = 0;
+  for (let c = reg.c0; c <= reg.c1; c++) {
+    if (colUsed(grid, c, reg.r0, reg.r1)) {
+      start = start === -1 ? c : start;
+      gap = 0;
+      continue;
+    }
+    if (start === -1) continue;
+    gap++;
+    if (gap >= COLUMN_GAP) {
+      out.push({ ...reg, c0: start, c1: c - gap });
+      start = -1;
+      gap = 0;
+    }
+  }
+  if (start !== -1) out.push({ ...reg, c0: start, c1: reg.c1 });
+  return out;
+}
+
+/**
+ * Splits a sheet into the rectangles that hold a table.
+ *
+ * Blank rows separate an "output info" block from the data table below it, and
+ * blank columns separate two tables printed side by side. Neither alone is
+ * enough: cutting a sheet into rows leaves a definitions table in H:J fused to
+ * the key-value block in A:B, and cutting it into columns leaves the info block
+ * fused to the data. So both are applied, in turn, until nothing moves --
+ * cutting a region by rows can expose a column gap that spanned the old region,
+ * and the other way round.
+ */
+function regionsOf(grid: string[][], width: number): Region[] {
+  let regions: Region[] = [{ r0: 0, r1: grid.length - 1, c0: 0, c1: width - 1 }];
+
+  // Alternating passes converge quickly -- two are enough for every real sheet
+  // seen here -- but the loop is bounded rather than trusted.
+  for (let pass = 0; pass < 6; pass++) {
+    const split = pass % 2 === 0 ? byRows : byColumns;
+    const next = regions.flatMap((reg) => split(grid, reg));
+    const settled =
+      next.length === regions.length &&
+      next.every((n, i) => {
+        const o = regions[i]!;
+        return n.r0 === o.r0 && n.r1 === o.r1 && n.c0 === o.c0 && n.c1 === o.c1;
+      });
+    regions = next;
+    if (settled && pass > 0) break;
+  }
+
+  // Reading order: down the sheet, then across it.
+  return regions.sort((a, b) => a.r0 - b.r0 || a.c0 - b.c0);
+}
+
+/**
+ * Splits a sheet into tables. A table is a rectangle of the grid whose top row
+ * reads as headers -- see `regionsOf` for how the rectangles are found.
  */
 function tablesOnSheet(
   grid: string[][],
@@ -145,23 +271,15 @@ function tablesOnSheet(
    */
   values?: string[][],
 ): DetectedTable[] {
-  const blocks: { start: number; end: number }[] = [];
-  let start = -1;
-
-  for (let r = 0; r < grid.length; r++) {
-    const blank = (grid[r] ?? []).every(isBlank);
-    if (!blank && start === -1) start = r;
-    if (blank && start !== -1) {
-      blocks.push({ start, end: r - 1 });
-      start = -1;
-    }
-  }
-  if (start !== -1) blocks.push({ start, end: grid.length - 1 });
-
+  const width = grid.reduce((w, row) => Math.max(w, row.length), 0);
   const tables: DetectedTable[] = [];
-  for (const b of blocks) {
-    // A header row plus at least one row of data.
-    if (b.end - b.start < 1) continue;
+
+  for (const reg of regionsOf(grid, width)) {
+    // A header row plus at least one row of data, across at least two columns.
+    if (reg.r1 - reg.r0 < 1 || reg.c1 - reg.c0 < 1) continue;
+
+    /** One row of the region, blanks included, so positions line up. */
+    const cut = (r: number) => (grid[r] ?? []).slice(reg.c0, reg.c1 + 1);
 
     // The header is the *fullest* row near the top of the block, not
     // necessarily the first. Real reports put a title above the table -- often
@@ -185,13 +303,21 @@ function tablesOnSheet(
     let headerAt = -1;
     let best = 0;
     let bestStyled = 0;
-    let fallback = b.start;
+    let fallback = reg.r0;
     let fallbackWidth = -1;
-    const limit = Math.min(b.start + HEADER_SEARCH_ROWS, b.end);
+    const limit = Math.min(reg.r0 + HEADER_SEARCH_ROWS, reg.r1);
 
-    for (let r = b.start; r <= limit; r++) {
-      const cells = (grid[r] ?? []).filter((v) => !isBlank(v));
-      if (!cells.length) continue;
+    for (let r = reg.r0; r <= limit; r++) {
+      const cells = cut(r).filter((v) => !isBlank(v));
+      // A row holding one cell names one column, which is not a table, and a
+      // row holding none names nothing. Neither can be the header -- the check
+      // below rejects exactly these -- so they must not be allowed to win the
+      // search either. They used to: a section title is painted like a heading
+      // and the key-value block beneath it is not, so a bold "Exchange Rate
+      // Information" alone in column A beat the four labelled rows under it,
+      // and the block was then thrown away for having a one-column header. The
+      // whole table went unseen by layer 1, with nothing said about it.
+      if (cells.length < 2) continue;
       // Strictly greater throughout, so the earliest row wins a tie -- a
       // header and its data rows are often equally full.
       if (cells.length > fallbackWidth) {
@@ -201,7 +327,7 @@ function tablesOnSheet(
       const named = cells.filter((v) => !NUMERIC.test(v)).length;
       if (!named) continue; // a row of numbers is data however it is painted
 
-      const painted = (styled?.[r] ?? []).filter(Boolean).length;
+      const painted = (styled?.[r] ?? []).slice(reg.c0, reg.c1 + 1).filter(Boolean).length;
       if (painted > bestStyled || (painted === bestStyled && named > best)) {
         bestStyled = painted;
         best = named;
@@ -213,19 +339,28 @@ function tablesOnSheet(
     // dropping the block: a wrong header row still beats no comparison, and
     // the names it produces are visible in the report.
     if (headerAt === -1) headerAt = fallback;
-    if (headerAt >= b.end) continue; // nothing left below it to be data
+    if (headerAt >= reg.r1) continue; // nothing left below it to be data
 
-    const headers = (grid[headerAt] ?? []).map((h) => String(h ?? '').trim());
+    const headers = cut(headerAt).map((h) => String(h ?? '').trim());
     if (headers.filter((h) => h !== '').length < 2) continue;
 
-    const body = grid.slice(headerAt + 1, b.end + 1);
+    const source = values ?? grid;
+    const body: string[][] = [];
+    for (let r = headerAt + 1; r <= reg.r1; r++) {
+      body.push((source[r] ?? []).slice(reg.c0, reg.c1 + 1));
+    }
+
     tables.push({
       name: '',
       headerRow: headerAt + 1,
-      endRow: b.end + 1,
+      endRow: reg.r1 + 1,
+      columns: `${numToCol(reg.c0 + 1)}:${numToCol(reg.c1 + 1)}`,
+      region: reg,
       headers,
-      keyColumns: detectKeyColumns(headers, (values ?? grid).slice(headerAt + 1, b.end + 1)),
+      keyColumns: detectKeyColumns(headers, body),
       rows: body.length,
+      filledPerColumn: headers.map((_, i) => body.filter((r) => !isBlank(r[i])).length),
+      firstRowFilled: headers.map((_, i) => !isBlank(body[0]?.[i])),
     });
   }
 
@@ -233,8 +368,17 @@ function tablesOnSheet(
   // "Policies" rather than "Policies · Table 1".
   tables.forEach((t, i) => {
     t.name = tables.length === 1 ? sheetName : `Table ${i + 1}`;
-    // Only the last table needs to run to the end of the sheet.
-    if (i === tables.length - 1) t.endRow = 0;
+
+    // A table with nothing below it runs to the end of the sheet, so it keeps
+    // working as its data grows. "Below" has to mean below *in its own
+    // columns*: a table in H:J may have nothing under it while another one
+    // fills A:BX further down, and letting either run to the bottom would
+    // swallow the other.
+    const covered = tables.some(
+      (o) => o !== t && o.region.r0 > t.region.r1 &&
+        o.region.c0 <= t.region.c1 && o.region.c1 >= t.region.c0,
+    );
+    if (!covered) t.endRow = 0;
   });
   return tables;
 }
@@ -353,11 +497,21 @@ export function specFromDetection(sheets: DetectedSheet[]): WorkbookSpec {
       continue;
     }
 
+    // A column bound is only written when the sheet actually puts tables side
+    // by side -- which is exactly when two of them share any row. Writing
+    // "A:Q" on every table of a stacked sheet would freeze a width that grows,
+    // and tell a reader of the spec nothing.
+    const overlap = (a: Region, b: Region) => a.r0 <= b.r1 && b.r0 <= a.r1;
+    const sideBySide = s.tables.some((t) =>
+      s.tables.some((o) => o !== t && overlap(t.region, o.region)),
+    );
+
     const tables: Record<string, WorkbookSheetSpec> = {};
     for (const t of s.tables) {
       tables[t.name] = {
         headerRow: t.headerRow,
         ...(t.endRow ? { endRow: t.endRow } : {}),
+        ...(sideBySide ? { columns: t.columns } : {}),
         ...(t.keyColumns ? { keyColumns: t.keyColumns } : {}),
       };
     }

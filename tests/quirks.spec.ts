@@ -550,10 +550,11 @@ test.describe('report shape', () => {
     const heading = lines.findIndex((l) => l.startsWith('### Data'));
     expect(heading).toBeGreaterThan(-1);
 
-    // Counts sit between the heading and the findings, and are the table's
-    // own -- the one above the report is the whole file's.
-    expect(lines[heading + 2]).toContain('within tolerance (±0.001)');
-    expect(lines[heading + 4]).toBe('| 3 | 2 | **1 (33.3%)** |');
+    // Where the table is, then its own counts, then the findings. The counts
+    // are the table's own -- the one above the report is the whole file's.
+    expect(lines[heading + 2]).toBe('_`A1:C4` — 3 columns × 3 rows, rows matched by key_');
+    expect(lines[heading + 4]).toContain('within tolerance (±0.001)');
+    expect(lines[heading + 6]).toBe('| 3 | 2 | **1 (33.3%)** |');
     expect(lines.slice(heading).find((l) => l.startsWith('**Value changes')))
       .toBe('**Value changes (1)**');
   });
@@ -582,8 +583,8 @@ test.describe('report shape', () => {
     // The same three columns in the same place, so two tables can be compared
     // at a glance without working out whether a missing block means no drift
     // or no data. With nothing forgiven, the column claims no number.
-    expect(lines[heading + 2]).toBe('| total | within tolerance | above tolerance |');
-    expect(lines[heading + 4]).toBe('| 1 | 0 | **1 (100%)** |');
+    expect(lines[heading + 4]).toBe('| total | within tolerance | above tolerance |');
+    expect(lines[heading + 6]).toBe('| 1 | 0 | **1 (100%)** |');
   });
 
   test('a table whose comparison never ran claims no counts', async () => {
@@ -609,7 +610,7 @@ test.describe('report shape', () => {
 
     const lines = md.split(/\r?\n/);
     const heading = lines.findIndex((l) => l.startsWith('### Data'));
-    expect(lines[heading + 2]).toContain('Comparison integrity');
+    expect(lines[heading + 4]).toContain('Comparison integrity');
     expect(md).not.toContain('| 0 | 0 | **0 (0%)** |');
   });
 
@@ -775,7 +776,10 @@ test.describe('report shape', () => {
     const md = formatMarkdownReport(diff, null, { name: 'few' });
 
     expect(md).not.toContain('By column');
-    expect(md).not.toContain('<details>');
     expect(md).toContain('North');
+    // The only folded block here is the inventory of what was verified; the
+    // findings themselves are short enough to stay flat.
+    expect(md.split('<details>')).toHaveLength(2);
+    expect(md).toContain('## What was verified');
   });
 });

@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { mkdir, readFile, readdir, rm, writeFile, cp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import ExcelJS from 'exceljs';
 import { buildMultiSheet, DIR } from './fixtures.js';
 
 /**
@@ -381,5 +382,123 @@ test.describe('a tree of report types', () => {
     expect(code).toBe(1);
     expect(out).toContain('case.json');
     expect(out).toContain('not valid JSON');
+  });
+
+  test('--write-meta writes a starting meta.json instead of one being typed out', async () => {
+    const dir = join(DIR, 'tree-meta', 'my_type');
+    await rm(join(DIR, 'tree-meta'), { recursive: true, force: true });
+    await mkdir(join(dir, 'case_001'), { recursive: true });
+    const golden = await buildMultiSheet('tree-meta-g.xlsx');
+    await cp(golden, join(dir, 'case_001', 'golden.xlsx'));
+    await cp(golden, join(dir, 'case_001', 'actual.xlsx'));
+
+    const { out, code } = cli('--write-meta', dir);
+    expect(code).toBe(0);
+    expect(out).toContain('written to');
+
+    const written = JSON.parse(await readFile(join(dir, 'meta.json'), 'utf8'));
+    expect(written.reportType).toBe('My Type');
+    // Per-sheet configuration is exactly what it must NOT invent: those
+    // entries go stale when a report changes shape, and a generated one is
+    // indistinguishable from one somebody meant.
+    expect(written.sheets).toBeUndefined();
+    // Notes are keyed with //, which the config reader treats as comments, so
+    // the file it writes is a file it can read.
+    expect(cli(dir).code).toBe(0);
+  });
+
+  test('--write-meta refuses to overwrite a config somebody wrote', async () => {
+    const dir = join(DIR, 'tree-meta', 'my_type');
+    await writeJson(join(dir, 'meta.json'), { reportType: 'Mine', metadata: ['Report ID'] });
+
+    const { out, code } = cli('--write-meta', dir);
+    expect(code).toBe(1);
+    expect(out).toContain('already has settings in it');
+    expect(out).toContain('reportType, metadata');
+    // And left it alone.
+    const kept = JSON.parse(await readFile(join(dir, 'meta.json'), 'utf8'));
+    expect(kept.reportType).toBe('Mine');
+  });
+
+  test('--write-expect records what was verified, and the guard then holds', async () => {
+    const dir = join(ROOT, 'reports', 'srq', 'case_001');
+    await writeJson(join(dir, 'case.json'), { label: 'a labelled case' });
+
+    const first = cli('--write-expect', join(ROOT, 'reports', 'srq'));
+    expect(first.out).toContain('expectations recorded');
+
+    const written = JSON.parse(await readFile(join(dir, 'case.json'), 'utf8'));
+    // Written beside what was already there, not over it.
+    expect(written.label).toBe('a labelled case');
+    expect(Object.keys(written.expect).length).toBeGreaterThan(0);
+
+    // The run it was recorded from still passes its own guard.
+    expect(cli(join(ROOT, 'reports', 'srq')).out).not.toContain('expected');
+
+    await rm(join(dir, 'case.json'), { force: true });
+  });
+
+  test('a table that stops being compared fails the run and is named', async () => {
+    // The failure this exists to prevent: coverage shrinking with nothing to
+    // show for it but a smaller number in a summary line.
+    const dir = join(ROOT, 'reports', 'srq', 'case_001');
+    await writeJson(join(dir, 'case.json'), {
+      expect: { Policies: ['A1:F6', 'A40:E60'], Premiums: 2 },
+    });
+
+    const { out, code } = cli(join(ROOT, 'reports', 'srq'));
+    expect(code).toBe(1);
+    expect(out).toContain('integrity');
+
+    const report = await readFile(join(dir, 'results', 'report.md'), 'utf8');
+    expect(report).toContain('Policies: expected 2 table(s), compared 1');
+    expect(report).toContain('not compared: A40:E60');
+    expect(report).toContain('Premiums: expected 2 table(s) compared by name and key, found 1');
+
+    await rm(join(dir, 'case.json'), { force: true });
+  });
+
+  test('a table added to a single-table sheet is added, not swapped in', async () => {
+    // The sheet carries one table, so its header row and key sit at the sheet
+    // level with no "tables" block -- which is what makes reports read
+    // "Ledger" rather than "Ledger · Table 1". Declaring a table on such a
+    // sheet used to replace it: one entry written to check a title block also
+    // stopped the sheet's real table being compared, and nothing said so.
+    const dir = join(DIR, 'tree-add', 'case_001');
+    await rm(join(DIR, 'tree-add'), { recursive: true, force: true });
+    await mkdir(dir, { recursive: true });
+
+    const build = async (name: string, drift: number) => {
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Ledger');
+      ws.addRow(['Ref', 'Name', 'Amount']);
+      ws.addRow(['R-1', 'a', 10]);
+      ws.addRow(['R-2', 'b', 20]);
+      ws.addRow(['R-3', 'c', 30]);
+      // Contiguous, so detection reads all of it as one table.
+      ws.addRow(['Band', 'Label', 'Value']);
+      ws.addRow(['B-1', 'low', 1 + drift]);
+      ws.addRow(['B-2', 'high', 2]);
+      const path = join(DIR, name);
+      await wb.xlsx.writeFile(path);
+      return path;
+    };
+    await cp(await build('tree-add-g.xlsx', 0), join(dir, 'golden.xlsx'));
+    await cp(await build('tree-add-a.xlsx', 5), join(dir, 'actual.xlsx'));
+
+    await writeJson(join(dir, 'case.json'), {
+      sheets: { Ledger: { tables: { Bands: { headerRow: 5, keyColumns: ['Band'] } } } },
+    });
+
+    cli(join(DIR, 'tree-add'));
+
+    const report = await readFile(join(dir, 'results', 'report.md'), 'utf8');
+    expect(report).toContain('## What was verified (2)');
+    // Both: the sheet's own table, named after the sheet, and the added one.
+    expect(report).toContain('| Ledger | `A1:C4`');
+    expect(report).toContain('| Ledger · Bands | `A5:C7`');
+    // The original is bounded above the added table rather than running on
+    // into it, so no cell is compared twice.
+    expect(report).toContain('B-1');
   });
 });

@@ -1,7 +1,10 @@
 import { test, expect } from '@playwright/test';
 import { join } from 'node:path';
 import { writeFile, mkdir } from 'node:fs/promises';
-import { detectWorkbook, detectSpec, detectKeyColumns } from '../src/index.js';
+import ExcelJS from 'exceljs';
+import {
+  detectWorkbook, detectSpec, detectKeyColumns, specFromDetection,
+} from '../src/index.js';
 import { buildMultiSheet, buildTwoTableSheet, writeCsv, DIR } from './fixtures.js';
 
 /**
@@ -103,6 +106,92 @@ test.describe('detectWorkbook', () => {
     expect(detail!.endRow).toBe(0);    // runs to the bottom
     expect(detail!.keyColumns).toEqual(['PolicyId']);
     expect(detail!.rows).toBe(5);
+  });
+
+  test('a bold section title does not swallow the block underneath it', async () => {
+    // The shape that used to disappear: a one-cell heading, painted the way
+    // these generators paint a heading, over a two-column key-value block that
+    // is not painted at all. The title won the header search on formatting,
+    // and the block was then discarded for naming only one column -- so its
+    // rows were never compared and nothing said they had not been.
+    await mkdir(DIR, { recursive: true });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Currency Info');
+
+    ws.addRow(['Exchange Rate Information']);
+    ws.getCell('A1').font = { bold: true };
+    ws.addRow(['Report Currency', 'USD']);
+    ws.addRow(['Date of FX', '2025-07']);
+    ws.addRow(['# Programs', 8]);
+    ws.addRow([]);
+    ws.addRow(['Currency Name', 'Unit Per USD']);
+    ws.getRow(6).font = { bold: true };
+    ws.addRow(['Euro', 1.1771]);
+    ws.addRow(['Japanese Yen', 0.00682547]);
+
+    const path = join(DIR, 'det-titled-block.xlsx');
+    await wb.xlsx.writeFile(path);
+    const [sheet] = await detectWorkbook(path);
+
+    expect(sheet!.tables).toHaveLength(2);
+    // The header is the first row that names two columns, not the title above.
+    expect(sheet!.tables[0]!.headerRow).toBe(2);
+    expect(sheet!.tables[1]!.headerRow).toBe(6);
+  });
+
+  test('two tables printed side by side are two tables', async () => {
+    // A blank row cannot separate these: both start on row 1 and the taller
+    // one keeps every row of the block non-blank. Read as one table, the two
+    // header rows fuse, the shorter table's rows read as blank, and a key
+    // named in one of them can be found in the other.
+    await mkdir(DIR, { recursive: true });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Report Info');
+
+    const put = (addr: string, v: unknown) => { ws.getCell(addr).value = v as never; };
+    put('A1', 'Report ID'); put('B1', 4542);
+    put('A2', 'Report Creator'); put('B2', 'S. Arya');
+    put('A3', 'Edison Version'); put('B3', '5.0.2');
+
+    put('H1', 'Return Year'); put('I1', 'Start'); put('J1', 'End');
+    for (let i = 0; i < 5; i++) {
+      put(`H${2 + i}`, 2 + i); put(`I${2 + i}`, i + 1.5); put(`J${2 + i}`, i + 2.5);
+    }
+
+    const path = join(DIR, 'det-side-by-side.xlsx');
+    await wb.xlsx.writeFile(path);
+    const [sheet] = await detectWorkbook(path);
+
+    expect(sheet!.tables).toHaveLength(2);
+    // Reading order: down the sheet, then across it.
+    const [left, right] = sheet!.tables;
+    expect(left!.columns).toBe('A:B');
+    expect(right!.columns).toBe('H:J');
+    expect(right!.headers).toEqual(['Return Year', 'Start', 'End']);
+    expect(right!.rows).toBe(5);
+
+    // The bound reaches the spec, or the reader would take the header row
+    // across the whole width and pull one table's columns into the other.
+    const spec = specFromDetection(sheet ? [sheet] : []);
+    expect(spec.sheets!['Report Info']!.tables!['Table 2']!.columns).toBe('H:J');
+  });
+
+  test('a single blank column is a spacer, not a separation', async () => {
+    // Dimension breakdowns carry an unnamed column between labels and
+    // measures. Cutting there would fragment the table it decorates.
+    await mkdir(DIR, { recursive: true });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Breakdown');
+    ws.addRow(['Region', null, 'Gross', 'Net']);
+    ws.addRow(['Sofia', null, 10, 8]);
+    ws.addRow(['Varna', null, 20, 16]);
+
+    const path = join(DIR, 'det-spacer.xlsx');
+    await wb.xlsx.writeFile(path);
+    const [sheet] = await detectWorkbook(path);
+
+    expect(sheet!.tables).toHaveLength(1);
+    expect(sheet!.tables[0]!.keyColumns).toEqual(['Region']);
   });
 
   test('a CSV is one table on one pseudo-sheet', async () => {

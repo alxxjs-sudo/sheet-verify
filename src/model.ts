@@ -1,9 +1,46 @@
 import type {
   Cell, CellValue, ResolvedSpec, Row, SheetModel, SheetSpec,
 } from './types.js';
-import { toHeaderRef, toR1C1 } from './a1.js';
+import { numToCol, toHeaderRef, toR1C1 } from './a1.js';
 
 export const KEY_SEP = '␟';
+
+/**
+ * The rectangle a table actually occupies, as an A1 range: "H2:J22".
+ *
+ * Read off the model rather than the spec, so it says what was *read* and not
+ * what was asked for. A spec with no `endRow` runs to the bottom of the sheet
+ * and a spec with no `columns` spans its whole width; neither is a useful
+ * answer to "what did this comparison cover". The header row is included,
+ * because it is part of the table even though its cells are compared as
+ * column names rather than as values.
+ *
+ * Empty when the table has no columns at all, which is a table that could not
+ * be read and has nothing to report.
+ */
+export function tableRange(model: SheetModel, headerRow: number): string {
+  const cols = [...model.headerIndex.values()];
+  if (!cols.length) return '';
+
+  const first = Math.min(...cols);
+  const last = Math.max(...cols);
+
+  // The bottom row, from the last row in file order. Walking back from the end
+  // covers a duplicate key, which is left out of `rows` while keeping its
+  // place in `order`.
+  let bottom = headerRow;
+  for (let i = model.order.length - 1; i >= 0; i--) {
+    const row = model.rows.get(model.order[i]!);
+    const address = row && Object.values(row)[0]?.address;
+    const m = address && /^[A-Z]+(\d+)$/.exec(address);
+    if (m) {
+      bottom = Math.max(bottom, Number(m[1]));
+      break;
+    }
+  }
+
+  return `${numToCol(first)}${headerRow}:${numToCol(last)}${bottom}`;
+}
 
 /**
  * Marks the nth row sharing a key, e.g. "Total" then "Total ×2".
@@ -52,6 +89,7 @@ export function resolveSpec(spec: SheetSpec): ResolvedSpec {
     sheet: spec.sheet ?? 0,
     headerRow: spec.headerRow ?? 1,
     endRow: spec.endRow ?? 0,
+    columns: spec.columns ?? '',
     keyColumns: spec.keyColumns ?? [],
     matchRowsByPosition: spec.matchRowsByPosition ?? false,
     fillKeyDown: spec.fillKeyDown ?? false,
