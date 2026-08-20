@@ -44,20 +44,25 @@ export class RecalcUnavailable extends Error {}
 /**
  * PowerShell to open a workbook, force a full rebuild, and save it.
  *
- * Written as an argument list rather than a script file so there is nothing to
- * clean up, and with every risky default turned off: no alerts to answer, no
- * link updates to prompt for, no events, and macros forced off, since a report
- * may arrive as `.xlsm` and automation must not be the thing that runs it.
+ * The path arrives in the environment rather than as an argument. `-Command`
+ * does not populate `$args`, and quoting a Windows path through a shell into a
+ * script that is itself a command-line argument has too many ways to be subtly
+ * wrong -- a space, an ampersand, a bracket in a folder name. An environment
+ * variable has none of them, and needs no temporary file to clean up.
+ *
+ * Every risky default is turned off: no alerts to answer, no link updates to
+ * prompt for, no events, and macros forced off, since a report may arrive as
+ * `.xlsm` and automation must not be the thing that runs it.
  *
  * `CalculateFullRebuild` rather than `Calculate`: a plain calculate honours
  * Excel's dependency tree, which is exactly the thing being distrusted here.
  */
 const SCRIPT = [
   '$ErrorActionPreference = "Stop"',
-  '$src = $args[0]; $dst = $args[1]',
+  '$path = $env:SHEET_VERIFY_RECALC',
   // Excel refuses to open, or opens read-only into Protected View, a file
   // carrying the mark-of-the-web. The copy is ours, so clearing it is safe.
-  'try { Unblock-File -Path $src -ErrorAction SilentlyContinue } catch {}',
+  'try { Unblock-File -Path $path -ErrorAction SilentlyContinue } catch {}',
   '$xl = New-Object -ComObject Excel.Application',
   'try {',
   '  $xl.Visible = $false',
@@ -65,9 +70,9 @@ const SCRIPT = [
   '  $xl.AskToUpdateLinks = $false',
   '  $xl.EnableEvents = $false',
   '  $xl.AutomationSecurity = 3',
-  '  $wb = $xl.Workbooks.Open($src, 0, $false)',
+  '  $wb = $xl.Workbooks.Open($path, 0, $false)',
   '  $xl.CalculateFullRebuild()',
-  '  $wb.SaveAs($dst, 51)',
+  '  $wb.Save()',
   '  $wb.Close($false)',
   '} finally {',
   '  $xl.Quit()',
@@ -106,8 +111,12 @@ async function recalcOne(src: string, dst: string): Promise<void> {
   try {
     await run(
       'powershell',
-      ['-NoProfile', '-NonInteractive', '-Command', SCRIPT, '-args', resolve(dst), resolve(dst)],
-      { windowsHide: true, maxBuffer: 1 << 24 },
+      ['-NoProfile', '-NonInteractive', '-Command', SCRIPT],
+      {
+        windowsHide: true,
+        maxBuffer: 1 << 24,
+        env: { ...process.env, SHEET_VERIFY_RECALC: resolve(dst) },
+      },
     );
   } catch (e) {
     const detail = String((e as { stderr?: string }).stderr || (e as Error).message)

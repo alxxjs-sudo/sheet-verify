@@ -4,6 +4,32 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.4.1 — 2026-08-20
+
+### `--recalc` could not find the file it was given
+
+Shipped broken. The workbook path was passed as `powershell -Command <script>
+-args <path>`, and `-Command` does not populate `$args` -- only `-File` does --
+so the script opened an empty path and every run failed with Excel's own
+"Sorry, we couldn't find ." The flag had been tested only down its refusal
+paths, which all still worked, so the failure looked like the safeguard doing
+its job.
+
+The path now travels in an environment variable. That also removes a quoting
+problem that was waiting to happen: a Windows path threaded through a shell into
+a script that is itself a command-line argument has a dozen ways to be subtly
+wrong, and folder names here contain spaces, brackets and ampersands.
+
+`$wb.Save()` replaces `$wb.SaveAs($dst, 51)` while I was in there -- the copy is
+already at the destination and already xlsx, so re-specifying the format was one
+more thing to get wrong.
+
+Verified end to end on real reports: a golden with **94 formulas and 0 stored
+results** comes back with 41, the originals are untouched, and on one pro-forma
+case the run went from **2 value differences to 5** -- the extra three being
+exactly what the "Will recalculate" sheet had predicted. That sheet correctly
+disappears from a recalculated run, having nothing left to predict.
+
 ## 1.4.0 — 2026-08-20
 
 ### `--recalc`: let Excel work the formulas out first
