@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-import { readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir,readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { runCase, type CaseOptions } from './case.js';
 import { recalculatePair } from './recalc.js';
+import { writeSummary, type CaseRecord, type CaseVerdict } from './summary.js';
 import { detectSpec } from './detect.js';
 import { summarizeSweep } from './sweep.js';
 import { makeBare, cachedValueState } from './bare.js';
@@ -826,6 +827,7 @@ async function main(): Promise<number> {
   }
 
   let failed = 0;
+  const records: CaseRecord[] = [];
   for (const c of found) {
     const layers = await configLayers(root, c.dir);
     const spec = await specFor(c, layers);
@@ -899,6 +901,10 @@ async function main(): Promise<number> {
 
 `);
         failed++;
+        records.push({
+          reportType: spec.reportType ?? DISPLAY(relative(root, dirname(c.dir))) ?? '(untyped)',
+          name: c.name, label, verdict: 'could not run', summary: (e as Error).message,
+        });
         continue;
       }
     }
@@ -939,12 +945,50 @@ async function main(): Promise<number> {
 
       console.log(`${result.ok ? '✓' : '✗'} ${head}`);
       for (const line of lines) console.log(`    ${line}`);
+
+      const compared = result.diff?.sheets.filter((o) => o.status === 'compared') ?? [];
+      const verdict: CaseVerdict = result.blessed ? 'blessed' : result.ok ? 'passed' : 'failed';
+      records.push({
+        reportType: spec.reportType ?? DISPLAY(relative(root, dirname(c.dir))) ?? '(untyped)',
+        name: c.name,
+        label,
+        verdict,
+        summary: result.summary,
+        sheetsCompared: compared.length,
+        sheetsFailing: compared.filter((o) => o.diff && !o.diff.ok).length,
+        tablesNotCompared: (result.diff?.sheets.length ?? 0) - compared.length,
+        uncheckedDiffering: result.sweep?.totalGaps ?? 0,
+        recalculated,
+        report: result.files.report,
+      });
     } catch (e) {
       failed++;
       console.log(`✗ ${head}`);
       if (path) console.log(`    ${path}`);
       console.error(`    ${(e as Error).message}`);
+      records.push({
+        reportType: spec.reportType ?? DISPLAY(relative(root, dirname(c.dir))) ?? '(untyped)',
+        name: c.name, label, verdict: 'could not run', summary: (e as Error).message,
+      });
     }
+  }
+
+  // One view of the whole run, grouped by report type. Written for two or more
+  // cases only: for a single case the case's own report already is this, and a
+  // second file saying the same thing in fewer words is clutter.
+  //
+  // It goes at the root of what was run, beside the tree rather than inside any
+  // case, because it belongs to none of them.
+  if (records.length > 1) {
+    // Inside the results folder, not beside the tree. A workbook at the root
+    // makes the root itself look like a case with no golden beside it, and the
+    // next run refuses to start: "no golden file. Rename one of
+    // [run-summary.xlsx]". The walker already skips this folder by name.
+    const into = join(root, resultDir);
+    await mkdir(into, { recursive: true });
+    const { markdown } = await writeSummary(join(into, 'run-summary'), records);
+    console.log(`
+${DISPLAY(relative(process.cwd(), markdown))} — and the .xlsx beside it`);
   }
 
   // Folders that were meant to be cases and could not be run. Counted as

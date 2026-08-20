@@ -17,6 +17,7 @@
  *   npm run clean -- path/to/cases
  */
 import { readdir, rm, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
 const DEFAULT_ROOT = 'output_comparison';
@@ -69,6 +70,17 @@ async function* resultsUnder(dir) {
 const found = [];
 for await (const p of resultsUnder(root)) found.push(p);
 
+/**
+ * The run summary belongs to the whole run rather than to any case, so it lives
+ * in a results folder at the root -- where the walk above, which only counts a
+ * results folder with a golden beside it, never reaches it. A summary left from
+ * the last run reads as current just as loudly as a stale results/ folder does.
+ */
+for (const name of RESULT_DIRS) {
+  const p = join(root, name);
+  if (existsSync(p)) found.push(p);
+}
+
 if (!found.length) {
   console.log(`nothing to clear under ${relative(process.cwd(), root) || root}`);
   process.exit(0);
@@ -80,6 +92,6 @@ for (const p of found) {
 }
 
 console.log(
-  `\n${found.length} results folder(s)${dry ? ' would be removed' : ' removed'}` +
+  `\n${found.length} item(s)${dry ? ' would be removed' : ' removed'}` +
   `${dry ? ' — re-run without --dry to do it' : ''}`,
 );

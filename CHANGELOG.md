@@ -4,6 +4,50 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.6.0 — 2026-08-20
+
+### A run summary: how the whole run went, by report type
+
+Every artefact so far describes one case. That is the right shape for fixing
+something and the wrong shape for the question asked first -- *how did the run
+go?* -- whose answer lived only in terminal scrollback, gone as soon as anyone
+scrolled and impossible to send to somebody who was not watching.
+
+A run covering more than one case now writes `results/run-summary.md` and
+`results/run-summary.xlsx` at the root of what was run.
+
+Grouped by report type, because that is the unit people work in: a release
+breaks a *kind* of report, and eight failures on one type with the rest clean is
+a different morning from one failure on each of eight types. Failures sort
+first inside each type, so nobody scrolls past twelve ticks to find them. A type
+that never named itself gets its folder path.
+
+The workbook opens on an **Overview** sheet -- every type, its counts, and a
+totals row -- then a sheet per type carrying more than the markdown does: sheets
+compared, sheets failing, tables not compared, unchecked differing cells,
+whether the run was recalculated, and the path to each case's own report.
+
+**Unchecked differing gets its own column and its own callout**, because it is
+the one number that can be non-zero on a case that passed. That is what a table
+with no row key looks like from outside, and it is the only way a green run can
+be hiding something.
+
+`clean` removes the summary with the results. One left from the last run reads
+as current exactly as loudly as a stale `results/` folder does.
+
+Built and immediately caught doing something worse than the problem it solved:
+written at the *root* of the tree, `run-summary.xlsx` is a spreadsheet with no
+golden beside it, so the next run read the root as a broken case and refused to
+start -- *"no golden file. Rename one of [run-summary.xlsx]"*. It now goes in
+the results folder, which the case walker already skips by name, and there is a
+test pinning that a second run still works.
+
+### Every script says what it does
+
+`package.json` grew from nine scripts to twenty-four across two releases with no
+explanation of any of them. The README now carries a table: one line each, and a
+note that arguments need npm's `--` separator.
+
 ## 1.5.1 — 2026-08-20
 
 ### Nothing identifying ships with the package

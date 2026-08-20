@@ -105,6 +105,11 @@ output_comparison/global_standard_cat_report/case_001/
     compared.xlsx       every cell checked, a worksheet per table
 ```
 
+A run covering more than one case also writes `results/run-summary.md` and
+`run-summary.xlsx` at the root of the tree: how the run went, grouped by report
+type, with a sheet per type. See
+[the run summary](docs/reading-a-report.md#the-run-summary).
+
 Exit code is `0` when everything matched and `1` when it did not, so it drops
 straight into CI.
 
@@ -351,32 +356,37 @@ npm run check       # typecheck + doc links + 285 Playwright tests
 
 `check` is the gate: run it before pushing and it says yes or no once.
 
-**Running comparisons**
+Every script, and what it does:
+
+| script | what it does |
+| --- | --- |
+| `check` | the gate — typecheck, documentation links, and the full test suite |
+| `build` | compile `src/` to `dist/`. `npm install` does this for you |
+| `typecheck` | types only, no output written |
+| `test` | the Playwright suite |
+| `links` | every internal documentation link and heading anchor resolves |
+| | |
+| `compare -- <case>` | compare a case, a report type, or the whole tree |
+| `recalc -- <case>` | the same, with Excel working the formulas out first |
+| `spec -- <case>` | print what detection made of the files, and stop |
+| `bless -- <case>` | accept the new report as the golden output |
+| | |
+| `write:meta -- <type>` | generate a starting `meta.json` from the pairs |
+| `write:expect -- <case>` | record what a run verified, as a guard against losing it |
+| | |
+| `clean` | delete every `results/` folder, and the run summary |
+| `clean:dry` | list what `clean` would delete, and delete nothing |
+| `fidelity -- <file>` | what a round-trip through the reader loses |
+| | |
+| `example` | the six example cases, end to end |
+| `example:case-json` | a narrated walkthrough of a sheet needing a `case.json` |
+
+Anything taking an argument needs the `--` separator, which is npm's way of
+saying the rest belongs to the script rather than to npm:
 
 ```bash
-npm run compare                    # every case under ./output_comparison
-npm run compare -- <case>          # one case, or one report type
-npm run recalc -- <case>           # have Excel work the formulas out first
-npm run spec -- <case>             # what detection made of the files
-npm run bless -- <case>            # accept the new report as the golden
-```
-
-**Generating configuration**
-
-```bash
-npm run write:meta -- <type>       # a starting meta.json, from the pairs
-npm run write:expect -- <case>     # record what a run verified, as a guard
-```
-
-**Housekeeping and checks**
-
-```bash
-npm run clean                      # delete every results/ folder
-npm run clean:dry                  # list what would go, delete nothing
-npm run links                      # every internal doc link resolves
-npm run fidelity -- <file>         # what a round-trip through the reader loses
-npm run example                    # the six example cases
-npm run example:case-json          # a narrated walkthrough of needing a case.json
+npm run compare -- output_comparison/quarterly_report
+npm run recalc -- output_comparison/quarterly_report/case_001
 ```
 
 Everything that runs the CLI rebuilds `dist/` first. `dist/` is generated and

@@ -161,6 +161,41 @@ a removed sheet, a failed invariant, a duplicate key — and those appear in
 `report.md` and `diff.json` only. **The verdict is the exit code and
 `report.md`, never the presence of this file.**
 
+## The run summary
+
+A run covering more than one case also writes, at the root of what was run:
+
+```
+output_comparison/results/
+  run-summary.md      how the run went — for reading and pasting into a message
+  run-summary.xlsx    the same, for sorting and filtering
+```
+
+Every other artefact describes one case, which is the right shape for fixing
+something and the wrong shape for the question asked first: **how did the run
+go?** That answer used to live only in terminal scrollback, where it is gone as
+soon as anyone scrolls and cannot be sent to someone who was not watching.
+
+Both are grouped **by report type**, because that is the unit people work in — a
+release breaks a *kind* of report, and eight failures on one type with the rest
+clean is a different morning from one failure on each of eight types. A type
+that never named itself in a `meta.json` is grouped under its folder path.
+
+The markdown opens with a table of every type and its counts, then a section per
+type listing each case with its label and result, failures first. The workbook
+has an **Overview** sheet with the same table plus a totals row, and one sheet
+per report type with more columns than the markdown carries — sheets compared,
+sheets failing, tables not compared, unchecked differing cells, whether the run
+was recalculated, and the path to each case's own report.
+
+**Watch the "Unchecked differing" column.** It counts cells that differ and
+that layer 1 never looked at, and it is the one number that can be non-zero on a
+case that *passed* — which is what a table with no row key looks like from the
+outside. The markdown calls it out under any type where it is non-zero.
+
+`npm run clean` removes the summary along with the `results/` folders, for the
+same reason: one left from the last run reads as current.
+
 ## compared.xlsx
 
 The full record of what was checked, in a deliberately plain column set: row key,

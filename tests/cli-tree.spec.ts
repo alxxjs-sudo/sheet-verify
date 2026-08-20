@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { mkdir, readFile, readdir, rm, writeFile, cp } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile, cp, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import ExcelJS from 'exceljs';
@@ -366,7 +366,11 @@ test.describe('a tree of report types', () => {
     cli(root);
 
     const r = spawnSync('node', ['scripts/clean-results.mjs', root, '--dry'], { encoding: 'utf8' });
-    expect(r.stdout).toContain('6 results folder(s) would be removed');
+    // Six cases, each with a results/ folder beside its golden/ folder, plus
+    // the run-level results/ at the root holding the summary.
+    expect(r.stdout).toContain('7 item(s) would be removed');
+    expect(r.stdout.match(/would remove/g)).toHaveLength(7);
+    expect(r.stdout).toContain(join('tree-folders', 'results'));
   });
 
   test('malformed JSON is reported with the file that contains it', async () => {
@@ -539,5 +543,60 @@ test.describe('a tree of report types', () => {
     // every one of those silences would read as a pass.
     expect(code).toBe(1);
     expect(out).toMatch(/Excel|Windows/);
+  });
+
+  test('a run writes one summary for the whole tree, grouped by report type', async () => {
+    await buildTree();
+    cli(ROOT);
+
+    const md = await readFile(join(ROOT, 'results', 'run-summary.md'), 'utf8');
+    expect(md).toContain('# Run summary');
+    // Grouped by report type, because that is the unit people work in --
+    // falling back to the folder path for a type that never named itself.
+    expect(md).toContain('## reports/global_standard_cat');
+    expect(md).toContain('## reports/srq');
+    expect(md).toMatch(/\| report type \| cases \| passed \| failed/);
+    // Every case appears exactly once, under its own type.
+    for (const c of ['case_001', 'case_002']) expect(md).toContain(c);
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(join(ROOT, 'results', 'run-summary.xlsx'));
+    const names = wb.worksheets.map((w) => w.name);
+    expect(names[0]).toBe('Overview');
+    expect(names.length).toBeGreaterThan(1);
+    // The overview totals every type, so a reader never adds up by hand.
+    const overview = wb.getWorksheet('Overview');
+    const last = overview.getRow(overview.rowCount).values;
+    expect(String(last[1])).toBe('All report types');
+  });
+
+  test('the summary does not turn the tree root into a broken case', async () => {
+    await buildTree();
+    const first = cli(ROOT);
+    expect(first.out).not.toContain('no runnable cases');
+
+    // The summary is a workbook, and a workbook at the root would be read as a
+    // case with no golden beside it -- which made the *next* run refuse to
+    // start at all: "no golden file. Rename one of [run-summary.xlsx]".
+    const second = cli(ROOT);
+    expect(second.out).not.toContain('no runnable cases');
+    // The summary path is printed, so its name appearing is expected. What
+    // must not appear is the root being read as a case that needs a golden.
+    expect(second.out).not.toContain('Rename one of');
+    expect(second.out).not.toContain('could not be run');
+    const count = (t: string) => /(\d+) cases?,/.exec(t)?.[1];
+    expect(count(second.out)).toBe(count(first.out));
+  });
+
+  test('clean removes the run summary along with the results', async () => {
+    await buildTree();
+    cli(ROOT);
+    await access(join(ROOT, 'results', 'run-summary.md'));
+
+    const r = spawnSync('node', ['scripts/clean-results.mjs', ROOT], { encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    // A summary left from the last run reads as current just as loudly as a
+    // stale results/ folder does.
+    await expect(access(join(ROOT, 'results', 'run-summary.md'))).rejects.toThrow();
   });
 });
