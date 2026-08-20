@@ -28,6 +28,13 @@ export interface MarkdownOptions {
   reportType?: string;
   /** Separator used in composite keys, replaced with " / " for display. */
   keySeparator?: string;
+  /**
+   * Both files were opened and saved by Excel before comparison, so the
+   * formulas carry results. Said out loud in the report: it changes what the
+   * numbers below mean, and a reader must never have to infer the basis of a
+   * comparison from the shape of its findings.
+   */
+  recalculated?: boolean;
 }
 
 /**
@@ -506,6 +513,17 @@ export function formatMarkdownReport(
     .join(' · ');
   if (identity) out.push(`_${cell(identity)}_`, '');
   out.push(verdict, '');
+
+  if (options.recalculated) {
+    out.push(
+      '> **Recalculated before comparison.** Both files were opened and saved by',
+      '> Excel first, so every formula carries a result and values are compared',
+      '> as well as formula text. The files under `golden/` and `current/` are',
+      '> untouched; the copies compared are in `recalculated/` beside this',
+      '> report.',
+      '',
+    );
+  }
 
   out.push(...table(['', ''], [
     ['golden', `${code(diff.base.source)} — ${diff.base.sheets.length} sheet(s)`],

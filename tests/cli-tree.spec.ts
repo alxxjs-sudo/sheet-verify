@@ -501,4 +501,43 @@ test.describe('a tree of report types', () => {
     // into it, so no cell is compared twice.
     expect(report).toContain('B-1');
   });
+
+  test('--results writes the run somewhere else, leaving an earlier run alone', async () => {
+    await buildTree();
+    cli(ROOT);
+    const plain = join(ROOT, 'reports', 'global_standard_cat', 'case_001', 'results');
+    expect((await readdir(plain)).sort()).toContain('report.md');
+
+    const { code } = cli(ROOT, '--results', 'results-second');
+    expect(code === 0 || code === 1).toBe(true);
+
+    const second = join(ROOT, 'reports', 'global_standard_cat', 'case_001', 'results-second');
+    expect(await readdir(second)).toContain('report.md');
+    // The first run is still there and still whole: two views side by side is
+    // the point of the flag.
+    expect(await readdir(plain)).toContain('report.md');
+  });
+
+  test('--results does not read an earlier run as a case of its own', async () => {
+    await buildTree();
+    cli(ROOT);
+    const first = cli(ROOT).out;
+    const second = cli(ROOT, '--results', 'results-second').out;
+    // results/ holds golden-looking artefacts; walking into it would invent
+    // extra cases, or report them as folders that could not be run.
+    const count = (t: string) => /(\d+) cases?,/.exec(t)?.[1];
+    expect(count(second)).toBe(count(first));
+    expect(second).not.toContain('could not be run');
+  });
+
+  test('--recalc refuses rather than comparing the files as they arrived', async () => {
+    await buildTree();
+    const { out, code } = cli(ROOT, '--recalc');
+    // Excel may be absent, already open, or the platform may not be Windows.
+    // Whichever it is, the run must say so and fail: silently comparing
+    // un-recalculated files would find far less than the flag promised, and
+    // every one of those silences would read as a pass.
+    expect(code).toBe(1);
+    expect(out).toMatch(/Excel|Windows/);
+  });
 });

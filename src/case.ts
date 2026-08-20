@@ -8,7 +8,7 @@ import { formatMarkdownReport } from './markdown.js';
 import {
   ledgerCsvLines, writeLedgerWorkbook, writeComparedWorkbook, type LedgerScope,
 } from './ledger.js';
-import { sweep, type SweepResult } from './sweep.js';
+import { sweep, type AffectedCell, type SweepResult } from './sweep.js';
 import { DEFAULT_TOLERANCE } from './model.js';
 import type { ComparedTable } from './workbook.js';
 
@@ -23,7 +23,8 @@ import type { ComparedTable } from './workbook.js';
  *     actual.xlsx        the latest run, copied in
  *     report.md          everything the run found -- start here
  *     diff.json          the same, structured
- *     differences.xlsx   one row per differing cell
+ *     differences.xlsx   one row per differing cell, plus the cells that will
+ *                        recalculate once Excel opens the file
  *     compared.xlsx      every cell compared, one worksheet per table
  */
 /**
@@ -137,6 +138,7 @@ async function writeLedger(
   path: string,
   tables: ComparedTable[],
   scope: LedgerScope,
+  affected: AffectedCell[],
 ): Promise<boolean> {
   const discard = async () => {
     await rm(path, { force: true });
@@ -146,7 +148,7 @@ async function writeLedger(
 
   const rows = path.toLowerCase().endsWith('.csv')
     ? await writeCsv(path, ledgerCsvLines(tables, scope))
-    : await writeLedgerWorkbook(path, tables, scope);
+    : await writeLedgerWorkbook(path, tables, scope, affected);
 
   return rows > 0 ? true : discard();
 }
@@ -243,7 +245,12 @@ export async function runCase(
     // checked to say so" is the result, not the absence of one.
     writeFile(files.report, formatMarkdownReport(diff, swept, { name, ...options }), 'utf8'),
     writeFile(files.diffJson, JSON.stringify(diff, null, 2), 'utf8'),
-    writeLedger(files.differences, compared, options.cellLedger ?? 'differences'),
+    writeLedger(
+      files.differences,
+      compared,
+      options.cellLedger ?? 'differences',
+      swept?.affected ?? [],
+    ),
     (options.comparedLedger ?? true)
       ? writeComparedWorkbook(files.compared, compared)
       : Promise.resolve(),

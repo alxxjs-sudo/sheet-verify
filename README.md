@@ -100,7 +100,8 @@ output_comparison/global_standard_cat_report/case_001/
   results/
     report.md           everything the run found — start here
     diff.json           the same, structured, for scripts and CI
-    differences.xlsx    one row per differing cell — absent when nothing differed
+    differences.xlsx    one row per differing cell, plus the cells that will
+                        recalculate — absent when there is nothing to report
     compared.xlsx       every cell checked, a worksheet per table
 ```
 

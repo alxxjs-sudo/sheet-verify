@@ -14,10 +14,19 @@ import { numToCol, referencesOf, type RefRect } from './a1.js';
  * references outward from every cell that differs reaches every cell that will
  * recalculate differently. No arithmetic is done and none is needed.
  *
- * Two honest limits. It says *will differ*, not *by how much* -- there is no
- * number to report. And it over-approximates: `IF(A1>0,B1,C1)` counts as
- * reading all three, so a change in the branch not taken still marks the cell.
- * Naming a cell that turns out to match is the cheaper mistake.
+ * Three honest limits. It says *will differ*, not *by how much* -- there is no
+ * number to report. It over-approximates: `IF(A1>0,B1,C1)` counts as reading
+ * all three, so a change in the branch not taken still marks the cell. Naming a
+ * cell that turns out to match is the cheaper mistake.
+ *
+ * And it can *under*-approximate, which is the expensive one. References are
+ * found by reading the formula's text, so a function that computes which cell
+ * it reads defeats it: `OFFSET($A$1, MATCH(...), 0)` textually references
+ * `$A$1` while actually reading wherever the arithmetic lands, and `INDIRECT`
+ * is worse. A change reaching a cell that way is not reported here. This is not
+ * hypothetical -- 62,406 of the 379,959 formulas in one real tree are OFFSET.
+ * Recalculating the files instead of reasoning about them has no such gap, and
+ * is what `recalc.ts` is for.
  */
 
 export interface CellId {
@@ -31,9 +40,29 @@ export interface FormulaCell extends CellId {
   formula: string;
 }
 
+/**
+ * A formula cell that will recalculate, and the cell it reads that makes it do
+ * so.
+ *
+ * Naming the cause is what makes the finding usable. "This cell recalculates"
+ * asks the reader to go looking; "this cell reads Report Info!AT59, which went
+ * from 35000000 to Unlimited" is the whole story in one row, which is what a
+ * reader who opened the two files and found a difference the tool appeared to
+ * miss actually needs.
+ */
+export interface AffectedRef extends CellId {
+  /**
+   * The cell whose change reaches this one. A differing cell when `indirect`
+   * is false; another formula cell, itself recalculating, when it is true.
+   */
+  via: CellId;
+  /** True when the cell it reads is itself a formula rather than a difference. */
+  indirect: boolean;
+}
+
 export interface ImpactResult {
   /** Formula cells that read something which differs, directly or through others. */
-  affected: CellId[];
+  affected: AffectedRef[];
   /** How many of those were reached only through another formula. */
   indirect: number;
   /** Cells that differ and are read by nothing -- the changes with no consequence. */
@@ -91,7 +120,7 @@ export function impactOf(formulas: FormulaCell[], changed: CellId[]): ImpactResu
 
   const seeds = new Set(changed.map(idOf));
   const dirty = new Set(seeds);
-  const affected: CellId[] = [];
+  const affected: AffectedRef[] = [];
   const affectedIds = new Set<string>();
   let indirect = 0;
   const reachedBySeed = new Set<string>();
@@ -113,7 +142,13 @@ export function impactOf(formulas: FormulaCell[], changed: CellId[]): ImpactResu
       if (dirty.has(id)) continue;
       dirty.add(id);
       affectedIds.add(id);
-      affected.push({ sheet: f.sheet, row: f.row, col: f.col });
+      affected.push({
+        sheet: f.sheet,
+        row: f.row,
+        col: f.col,
+        via: { sheet: cell.sheet, row: cell.row, col: cell.col },
+        indirect: !direct,
+      });
       if (direct) reachedBySeed.add(id);
       else indirect++;
       queue.push(f);

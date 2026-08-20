@@ -232,3 +232,62 @@ reliably struggles with — a key-value block with no header row, and a data tab
 under title blocks — and the two things about this configuration that are
 positional rather than named, so you know which of your entries will need
 revisiting and which will not.
+
+## Recalculating before comparing
+
+These generators write formulas and no results — Excel works them out when you
+open the file. Across a tree of 33 real cases that is **379,959 formula cells
+and not one carrying a stored value**, so by default every one of them compares
+as formula text alone: identical text on both sides matches, and a total that
+moved by billions reads as identical.
+
+```bash
+npx sheet-verify --recalc
+```
+
+Both files are copied, opened and saved by Excel, and the copies are compared.
+Every formula then carries a result and compares as an ordinary value.
+
+- **The inputs are never touched.** `golden/` and `current/` stay exactly as the
+  generator wrote them — they are the record of what it produced, and a run must
+  not rewrite its own evidence. The copies go in `recalculated/` beside the
+  results and are cleared with them.
+- **`report.md` says so**, at the top, above every number it changes the meaning
+  of.
+- **It refuses rather than degrades.** No Windows, no Excel, or Excel already
+  open, and the run fails with a message. Silently comparing the files as they
+  arrived would find far less than the flag promised, and every one of those
+  silences would read as a pass.
+- **Excel must be closed.** Automation attaches to a running session and ends by
+  quitting it with alerts suppressed, which would discard anything unsaved. The
+  run checks, and stops.
+
+It is slower than a plain run by however long Excel takes to open and save each
+file, which on a large report is seconds rather than milliseconds.
+
+### Keeping both runs
+
+`--results` names the folder a case writes into, so the two views can sit side
+by side rather than overwrite each other:
+
+```bash
+npx sheet-verify                                      # -> results/
+npx sheet-verify --recalc --results results-recalc    # -> results-recalc/
+```
+
+There is deliberately no way to produce both from one command. Two folders mean
+two verdicts and two exit codes, and when they disagree the tool has stopped
+answering the question it exists to answer. Choosing at the command line keeps
+one run, one answer.
+
+`npm run clean -- --results=results-recalc` clears the named folder; without the
+flag it clears `results/`.
+
+### Which one is the real answer
+
+The recalculated run, when you can have it. It **contains** the plain one —
+formula text is still compared, so nothing the plain run finds is lost — and it
+adds the values, which is most of the report. The plain run is what you fall
+back to when Excel is not available, and its "Will recalculate" sheet is the
+substitute: which cells would move, and driven by what, without the numbers.
+

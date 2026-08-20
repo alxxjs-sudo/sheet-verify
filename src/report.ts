@@ -7,6 +7,12 @@ export interface ReportOptions {
   keySeparator?: string;
   /** Show cascaded (non-root-cause) value differences. Default false. */
   showCascades?: boolean;
+  /**
+   * Both files were recalculated by Excel before comparison. Reported, never
+   * acted on -- it changes what the comparison could see, so it belongs at the
+   * top of the report rather than in the command someone ran last week.
+   */
+  recalculated?: boolean;
 }
 
 /**

@@ -164,6 +164,83 @@ test.describe('runCase', () => {
     expect(values.filter((v: any) => v.rootCause)).toHaveLength(1);
   });
 
+  test('a recalculated run says so at the top of its report', async () => {
+    const dir = await caseDir('recalc-notice');
+    const golden = await buildSweepWorkbook('notice-golden.xlsx');
+    const actual = await buildSweepWorkbook('notice-actual.xlsx', {
+      sumDrift: { 'P-1001': 999999 },
+    });
+    const spec: CaseOptions = {
+      sheets: { Policies: { keyColumns: ['PolicyId'] } },
+      recalculated: true,
+    };
+
+    await runCase(golden, dir, spec);
+    const r = await runCase(actual, dir, spec);
+    const report = await readFile(r.files.report, 'utf8');
+
+    // What a comparison could see changes the meaning of everything under it,
+    // so it is stated rather than left to be inferred from the findings.
+    expect(report).toContain('Recalculated before comparison');
+    expect(report).toContain('untouched');
+
+    // And not claimed when it did not happen.
+    const plainDir = await caseDir('recalc-none');
+    const plainSpec: CaseOptions = { sheets: { Policies: { keyColumns: ['PolicyId'] } } };
+    await runCase(golden, plainDir, plainSpec);
+    const plain = await runCase(actual, plainDir, plainSpec);
+    expect(await readFile(plain.files.report, 'utf8')).not.toContain('Recalculated');
+  });
+
+  test('differences.xlsx names the cells that will recalculate, and what drives each', async () => {
+    const dir = await caseDir('ledger-recalc');
+    // Formulas with no cached result, as the real reports arrive: the drifted
+    // Sum Insured differs outright, and the Annual Cost that reads it has
+    // nothing stored to compare, so it can only be reported as recalculating.
+    const golden = await buildSweepWorkbook('case-recalc-golden.xlsx');
+    const actual = await buildSweepWorkbook('case-recalc-actual.xlsx', {
+      sumDrift: { 'P-1001': 999999 },
+    });
+    const spec: CaseOptions = { sheets: { Policies: { keyColumns: ['PolicyId'] } } };
+
+    await runCase(golden, dir, spec);
+    const r = await runCase(actual, dir, spec);
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(r.files.differences);
+
+    // Beside the differences, not instead of them.
+    expect(wb.worksheets.map((w) => w.name)).toContain('Differences');
+    const ws = wb.getWorksheet('Will recalculate')!;
+    expect(ws).toBeTruthy();
+
+    const headers: string[] = [];
+    ws.getRow(1).eachCell((cell, c) => { headers[c - 1] = String(cell.value ?? ''); });
+    expect(headers).toEqual([
+      'Sheet', 'Cell', 'Column', 'How',
+      'Driven by sheet', 'Driven by cell',
+      'Golden (value or formula)', 'Actual (value or formula)',
+    ]);
+
+    const rows: Record<string, string>[] = [];
+    for (let n = 2; n <= ws.rowCount; n++) {
+      const rec: Record<string, string> = {};
+      headers.forEach((h, i) => { rec[h] = String(ws.getRow(n).getCell(i + 1).value ?? ''); });
+      rows.push(rec);
+    }
+
+    // The Annual Cost cell on the drifted row, named with the change that
+    // drives it -- which is the whole reason the sheet exists. Without it a
+    // reader who saw this cell move in Excel finds no row for it anywhere.
+    const driven = rows.find((x) => x['How'] === 'reads it directly')!;
+    expect(driven).toBeTruthy();
+    expect(driven['Sheet']).toBe('Policies');
+    expect(driven['Column']).toBe('Annual Cost');
+    expect(driven['Driven by sheet']).toBe('Policies');
+    expect(driven['Driven by cell']).not.toBe('');
+    expect(driven['Actual (value or formula)']).toContain('999999');
+  });
+
   test('the ledger holds only differences by default — a matching cell earns no row', async () => {
     const dir = await caseDir('ledger-default');
     const golden = await buildMultiSheet('case-led-golden.xlsx');

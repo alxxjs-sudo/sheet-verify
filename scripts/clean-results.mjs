@@ -22,9 +22,17 @@ import { join, relative, resolve } from 'node:path';
 const DEFAULT_ROOT = 'output_comparison';
 const RESULT_DIR = 'results';
 
+
 const args = process.argv.slice(2);
 const dry = args.some((a) => a === '--dry' || a === '--dry-run');
 const root = resolve(args.find((a) => !a.startsWith('-')) ?? DEFAULT_ROOT);
+/**
+ * A run started with `--results <name>` writes somewhere else, and those
+ * folders go just as stale as the default one. Naming it here means a clean
+ * clears what the last run actually wrote rather than what it usually writes.
+ */
+const named = args.find((a) => a.startsWith('--results='));
+const RESULT_DIRS = new Set([RESULT_DIR, ...(named ? [named.slice(10)] : [])]);
 
 const isDir = async (p) => stat(p).then((s) => s.isDirectory(), () => false);
 
@@ -34,7 +42,7 @@ if (!(await isDir(root))) {
 }
 
 /**
- * A `results/` folder counts only when a golden sits beside it -- either a
+ * A results folder counts only when a golden sits beside it -- either a
  * golden file, or a `golden/` folder holding one, which is how a download
  * keeps the name the source system gave it. Anything else called `results`
  * belongs to whoever put it there.
@@ -50,11 +58,11 @@ async function* resultsUnder(dir) {
   const beside = entries.some(
     (e) => (e.isFile() && GOLDEN_FILE.test(e.name)) || (e.isDirectory() && GOLDEN_DIR.test(e.name)),
   );
-  if (names.includes(RESULT_DIR) && beside) {
-    yield join(dir, RESULT_DIR);
+  if (beside) {
+    for (const name of RESULT_DIRS) if (names.includes(name)) yield join(dir, name);
   }
   for (const e of entries) {
-    if (e.isDirectory() && e.name !== RESULT_DIR) yield* resultsUnder(join(dir, e.name));
+    if (e.isDirectory() && !RESULT_DIRS.has(e.name)) yield* resultsUnder(join(dir, e.name));
   }
 }
 

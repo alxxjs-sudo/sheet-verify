@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import type { Cell, CellValue, ResolvedSpec } from './types.js';
 import type { ComparedTable } from './workbook.js';
+import type { AffectedCell } from './sweep.js';
 import {
   canonHeader, displayKey, equalValues, rowKeyMatcher, tableRange, toleranceFor,
 } from './model.js';
@@ -411,6 +412,8 @@ export async function writeLedgerWorkbook(
   path: string,
   tables: ComparedTable[],
   scope: LedgerScope = 'differences',
+  /** Formula cells layer 2 says will recalculate. Written as a second sheet. */
+  affected: AffectedCell[] = [],
 ): Promise<number> {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'sheet-verify';
@@ -421,9 +424,22 @@ export async function writeLedgerWorkbook(
   COLUMNS.forEach((c, i) => { ws.getColumn(i + 1).width = c.width; });
 
   const rows = [...ledgerRows(tables, scope)];
-  // Nothing to report: the caller clears any file rather than leaving an empty
-  // one, so do not create it in the first place.
-  if (!rows.length) return 0;
+  // Nothing to report at all: the caller clears any file rather than leaving an
+  // empty one, so do not create it in the first place. Cells due to recalculate
+  // count as something to report -- a run where the only finding is "these
+  // twelve totals will move" is exactly the run this file was being opened for
+  // and found silent.
+  if (!rows.length && !affected.length) return 0;
+
+  if (!rows.length) {
+    ws.getCell('A1').value =
+      'No cell differed in the keyed comparison. See "Will recalculate" for ' +
+      'formulas whose inputs moved.';
+    ws.getCell('A1').font = { italic: true, color: { argb: MUTED } };
+    addRecalculationSheet(wb, affected);
+    await wb.xlsx.writeFile(path);
+    return affected.length;
+  }
 
   const values = rows.map((r) =>
     COLUMNS.map((c) => {
@@ -465,8 +481,94 @@ export async function writeLedgerWorkbook(
     }
   });
 
+  addRecalculationSheet(wb, affected);
+
   await wb.xlsx.writeFile(path);
   return rows.length;
+}
+
+/** Columns of the recalculation sheet. */
+const RECALC_COLUMNS: { header: string; width: number }[] = [
+  { header: 'Sheet', width: 30 },
+  { header: 'Cell', width: 10 },
+  { header: 'Column', width: 24 },
+  { header: 'How', width: 24 },
+  { header: 'Driven by sheet', width: 30 },
+  { header: 'Driven by cell', width: 14 },
+  // A driving cell can be a literal or a formula, and on these reports it is
+  // usually a formula whose text changed. Calling the column "value" would
+  // make every such row look like a mislabelled one.
+  { header: 'Golden (value or formula)', width: 34 },
+  { header: 'Actual (value or formula)', width: 34 },
+];
+
+/**
+ * The cells that will come out different once Excel recalculates, and the
+ * change that drives each one.
+ *
+ * This sheet exists because of a specific and repeated misreading. These
+ * reports arrive with formulas and no stored results -- Excel works them out on
+ * open -- so a formula whose inputs moved has nothing to compare and never
+ * reaches the differences list. Someone then opens the two files side by side,
+ * sees a column of numbers plainly differ, finds no row for it here, and
+ * concludes the comparison missed it. It did not: it reported the input that
+ * moved, on another sheet, which is the cause rather than the symptom.
+ *
+ * `report.md` has always said so under "Will recalculate differently". Nobody
+ * reads it, because the artefact that gets opened is this one. So it goes here
+ * too, next to the differences, naming both ends: the cell that will move and
+ * the cell whose change moves it, with that cell's two values spelled out.
+ *
+ * What it deliberately does not say is what the recalculated number will *be*.
+ * Nothing here evaluates formulas, so there is no such number to write. The
+ * column is the question answered -- which cells, driven by what -- not a
+ * prediction of the arithmetic.
+ */
+function addRecalculationSheet(wb: ExcelJS.Workbook, affected: AffectedCell[]): void {
+  if (!affected.length) return;
+
+  const ws = wb.addWorksheet('Will recalculate', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+  RECALC_COLUMNS.forEach((c, i) => { ws.getColumn(i + 1).width = c.width; });
+
+  const rows = affected.map((a) => [
+    a.sheet,
+    a.address,
+    a.column ?? '',
+    a.indirect ? 'through another formula' : 'reads it directly',
+    a.via.sheet,
+    a.via.address,
+    a.via.base ?? '',
+    a.via.next ?? '',
+  ]);
+
+  ws.addTable({
+    name: 'WillRecalculate',
+    ref: 'A1',
+    headerRow: true,
+    style: { theme: 'TableStyleLight8', showRowStripes: true },
+    columns: RECALC_COLUMNS.map((c) => ({ name: c.header, filterButton: true })),
+    rows,
+  });
+
+  styleHeader(ws, RECALC_COLUMNS.length);
+
+  affected.forEach((a, i) => {
+    const rowNum = i + 2;
+    // Reading it directly is the actionable half: the cause is a cell that
+    // differs and both of its sides are on the row. A cell reached through
+    // another formula has no difference to quote, so it is muted rather than
+    // dropped -- the chain is worth seeing.
+    ws.getCell(rowNum, 4).font = a.indirect
+      ? { color: { argb: MUTED } }
+      : { color: { argb: INK }, bold: true };
+    if (a.indirect) {
+      for (let c = 5; c <= RECALC_COLUMNS.length; c++) {
+        ws.getCell(rowNum, c).font = { color: { argb: MUTED } };
+      }
+    }
+  });
 }
 
 /**

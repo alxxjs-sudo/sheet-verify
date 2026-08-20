@@ -4,6 +4,92 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.4.0 — 2026-08-20
+
+### `--recalc`: let Excel work the formulas out first
+
+The reports carry formulas and no stored results, so a formula compares as its
+text alone -- identical text on both sides matches, and the number a reader sees
+never reaches the comparison. `--recalc` copies both files, has Excel open and
+save them, and compares the copies. Every formula then carries a result and
+compares as an ordinary value.
+
+Nothing here evaluates a formula, and nothing here should: a spreadsheet engine
+is an enormous thing to own and be wrong about, and Excel already has one.
+
+- **The inputs are never touched.** `golden/` and `current/` are the record of
+  what the generator produced. The copies live in `recalculated/` beside the
+  results and are cleared with them.
+- **`report.md` says so**, above the numbers whose meaning it changes.
+- **It refuses rather than degrades** -- wrong platform, no Excel, or Excel
+  already open, and the run fails. Comparing the files as they arrived would
+  find far less than the flag promised, and every silence would read as a pass.
+- **It stops when Excel is open.** `New-Object -ComObject Excel.Application`
+  can attach to a session someone is working in, and the script ends by quitting
+  what it got hold of with alerts suppressed. That would close their workbooks
+  and discard unsaved work. The cost of refusing is a message; the cost of
+  attaching is somebody's morning.
+
+This also closes a hole in the impact graph that no amount of static analysis
+can. References are found by reading a formula's text, so `OFFSET($A$1,
+MATCH(...), 0)` is recorded as reading `$A$1` while it actually reads wherever
+the arithmetic lands -- and **62,406 of the 379,959 formulas in the tree are
+OFFSET**. Changes reaching a cell that way were never reported and could not be.
+Excel does not have to reason about it. The limit is now written down in
+`impact.ts`, which had claimed only to over-approximate.
+
+### `--results <name>`
+
+Names the folder a case writes into, so a plain run and a `--recalc` run can sit
+side by side instead of overwriting each other:
+
+    npx sheet-verify                                    # -> results/
+    npx sheet-verify --recalc --results results-recalc  # -> results-recalc/
+
+Deliberately not one command producing both. Two folders mean two verdicts and
+two exit codes, and when they disagree the tool has stopped answering the
+question it exists to answer. `clean` takes the same flag, and the folder walker
+skips both names, so an earlier run is never read as a case of its own.
+
+
+### `differences.xlsx` says which cells will recalculate, and what drives them
+
+A colleague opened the two reports, found a sheet of totals plainly different,
+looked for them in `differences.xlsx`, found nothing, and concluded the tool had
+missed them. It had not. These reports carry formulas with no stored results --
+across a tree of 33 real cases, **379,959 formula cells and not one with a
+cached value** -- so a formula whose inputs moved has nothing to compare. What
+moved was an input on another sheet, and that was reported.
+
+`report.md` has said so under "Will recalculate differently" since the sweep
+existed. Nobody reads it, because the artefact that gets opened is the
+spreadsheet. So it goes there too, as a second worksheet:
+
+```
+Sheet      Cell  Column          How                      Driven by  Golden      Actual
+RDS Loss   K15   Ground-Up (#3)  reads it directly        E15        1536804.44  11536804.44
+RDS Loss   E28   Ground-Up       reads it directly        E15        1536804.44  11536804.44
+RDS Loss   K28   Ground-Up (#3)  through another formula  E28
+```
+
+Each row names both ends -- the cell that will move, and the change that moves
+it, with that cell's two values spelled out. Chains are followed, so the third
+row above points at the second and the second points at the difference.
+
+It does not say what the recalculated number will *be*. Nothing here evaluates
+formulas, so there is no such number; the sheet answers which cells and driven
+by what. Opening both files in Excel and saving them before a run bakes the
+results in, and then they compare as ordinary values.
+
+Two fixes fell out of building it. `AffectedCell.indirect` was documented and
+hardcoded `false`, so nothing had ever distinguished a cell that reads a
+difference from one that reads a formula that reads a difference; it is now set
+from the walk that already computed it, and 51 of 99 cells on one real case are
+downstream rather than direct. And a run whose only finding was recalculation
+wrote no `differences.xlsx` at all -- the file is now written when either kind
+of finding exists, since "these twelve totals will move" is exactly what the
+file was being opened for.
+
 ## 1.3.0 — 2026-08-19
 
 ### A block with no header row is read as data, not renamed by one

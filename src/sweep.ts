@@ -129,6 +129,26 @@ export interface AffectedCell {
   column?: string;
   /** True when it reads a differing cell only through another formula. */
   indirect: boolean;
+  /**
+   * The cell whose change reaches this one. Always named; its two values are
+   * carried too when that cell is itself a difference.
+   *
+   * This is what makes the finding answerable without opening both files. A
+   * reader who has already spotted a difference Excel shows and the ledger does
+   * not needs to be told which change drives it, not merely that something
+   * does.
+   */
+  via: {
+    sheet: string;
+    address: string;
+    /**
+     * What the driving cell holds on each side. Present only when that cell is
+     * itself a difference; a cell reached through another formula has no
+     * stored value to quote, and inventing one would be worse than a blank.
+     */
+    base?: string;
+    next?: string;
+  };
 }
 
 export interface SweepResult {
@@ -788,13 +808,24 @@ export async function sweep(
     differences.map((d) => ({ sheet: d.sheet, row: d.row, col: d.column })),
   );
   const bands = headerBandsOf(compared);
+  // Every differing cell by address, so an affected cell can quote what its
+  // cause holds on each side rather than only naming it.
+  const differing = new Map(
+    differences.map((d) => [`${canon(d.sheet)}|${d.address}`, d] as const),
+  );
   const affected: AffectedCell[] = impact.affected.map((c) => {
     const column = columnAt(bands, c.sheet, c.row, c.col);
+    const cause = differing.get(`${canon(c.via.sheet)}|${addressOf(c.via)}`);
     return {
       sheet: c.sheet,
       address: addressOf(c),
       ...(column !== undefined ? { column } : {}),
-      indirect: false,
+      indirect: c.indirect,
+      via: {
+        sheet: c.via.sheet,
+        address: addressOf(c.via),
+        ...(cause ? { base: cause.base, next: cause.next } : {}),
+      },
     };
   });
 

@@ -118,6 +118,39 @@ Only differing cells get a row. A cell that was **ignored** still earns one when
 it actually differs — that is the evidence the exclusion is doing work — but not
 when it was ignored *and* identical.
 
+### The "Will recalculate" sheet
+
+A second worksheet, present whenever a formula reads something that differs.
+
+**Read this one when a difference you can see in Excel has no row in
+`Differences`.** These reports arrive from the generator with formulas and no
+stored results — Excel works them out when you open the file — so a formula
+whose inputs moved has nothing to compare and cannot appear as a difference.
+Open the two files side by side and a whole column of totals plainly differs;
+look for it in `Differences` and it is not there. The comparison did not miss
+it. It reported the *input* that moved, usually on another sheet, and this
+sheet is the bridge between the two.
+
+| column | meaning |
+| --- | --- |
+| Sheet, Cell, Column | the cell that will come out different |
+| How | `reads it directly`, or `through another formula` |
+| Driven by sheet, Driven by cell | the change that reaches it |
+| Golden / Actual (value or formula) | what that driving cell holds on each side |
+
+Chains are followed, so a cell two steps downstream names the cell above it and
+that row names the original difference. A driving cell that is itself a formula
+has no stored value to quote, so those two columns are blank and the row is
+greyed.
+
+What it does **not** say is what the recalculated number will be. Nothing here
+evaluates formulas, so there is no such number to write — the sheet answers
+*which cells and driven by what*, not *by how much*. To get the numbers
+themselves, open both files in Excel and save them before comparing: that bakes
+the computed results in, and they then compare like any other value.
+
+The same list is in `report.md` under **Will recalculate differently**.
+
 **When nothing differs, the file is not written at all**, and one left by an
 earlier run is removed. An empty differences file reads as a fault rather than
 as the answer, and a stale one is worse: it describes a comparison that no

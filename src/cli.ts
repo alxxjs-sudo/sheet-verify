@@ -2,6 +2,7 @@
 import { readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { runCase, type CaseOptions } from './case.js';
+import { recalculatePair } from './recalc.js';
 import { detectSpec } from './detect.js';
 import { summarizeSweep } from './sweep.js';
 import { makeBare, cachedValueState } from './bare.js';
@@ -23,6 +24,13 @@ import type { WorkbookDiffResult, WorkbookSheetSpec, WorkbookSpec } from './type
 
 const DEFAULT_ROOT = 'output_comparison';
 const RESULT_DIR = 'results';
+
+/**
+ * The folder each case writes into, from `--results`. Module state because the
+ * folder walker is recursive and this is a property of the run rather than of
+ * any one directory -- threading it through every frame would say less.
+ */
+let resultDir: string = RESULT_DIR;
 const SPREADSHEET = new Set(['.xlsx', '.xlsm', '.csv', '.tsv', '.txt']);
 
 const GOLDEN = /^(golden|baseline|expected|before)\b/i;
@@ -38,12 +46,17 @@ interface Args {
   sweep: boolean;
   bare: boolean;
   help: boolean;
+  /** Have Excel work the formulas out before comparing. See recalc.ts. */
+  recalc: boolean;
+  /** Folder each case writes its artefacts into. Default `results`. */
+  results: string;
 }
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     target: '', bless: false, printSpec: false, writeMeta: false, writeExpect: false,
     ledger: 'differences', sweep: true, bare: false, help: false,
+    recalc: false, results: RESULT_DIR,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
@@ -54,6 +67,9 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--write-expect') args.writeExpect = true;
     else if (a === '--no-sweep') args.sweep = false;
     else if (a === '--bare') args.bare = true;
+    else if (a === '--recalc') args.recalc = true;
+    else if (a === '--results') args.results = argv[++i] ?? RESULT_DIR;
+    else if (a.startsWith('--results=')) args.results = a.slice(10);
     else if (a === '--ledger') args.ledger = argv[++i] as LedgerScope;
     else if (a.startsWith('--ledger=')) args.ledger = a.slice(9) as LedgerScope;
     else if (!a.startsWith('-')) args.target ||= a;
@@ -85,7 +101,8 @@ LAYOUT
         results/       written by this command
           report.md           everything the run found — start here
           diff.json           the same, structured
-          differences.xlsx    one row per differing cell; absent if none differed
+          differences.xlsx    one row per differing cell, plus a sheet naming the
+                              cells that will recalculate; absent if neither exists
           compared.xlsx       every cell checked, a worksheet per table
 
   A pair can sit in folders instead, which is what a downloader produces when
@@ -187,6 +204,14 @@ OPTIONS
                      table that later stops being compared fails the run
   --ledger <scope>   all | differences | none      (default: differences)
   --no-sweep         skip layer 2. Saves a second parse of both files
+  --recalc           have Excel work the formulas out before comparing. These
+                     reports arrive with formulas and no stored results, so
+                     without this a formula compares as its text alone and a
+                     total that moved by billions reads as identical. Copies are
+                     recalculated; golden/ and current/ are never touched.
+                     Windows with Excel installed, and Excel must be closed
+  --results <name>   folder each case writes into. Default "results". Use it to
+                     keep a plain run and a --recalc run side by side
   -h, --help         this text
 
 EXIT CODE
@@ -332,7 +357,9 @@ async function findCases(
   }
 
   const subdirs = entries
-    .filter((e) => e.isDirectory() && e.name !== RESULT_DIR)
+    // Both names: a run writing to results-recalculated/ must still not walk
+    // into the results/ folder an earlier run left, and read it as a case.
+    .filter((e) => e.isDirectory() && e.name !== RESULT_DIR && e.name !== resultDir)
     .sort((a, b) => a.name.localeCompare(b.name));
 
   // A folder holding spreadsheets, or a golden/current pair of folders, was
@@ -669,6 +696,7 @@ function headline(
 
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
+  resultDir = args.results;
   if (args.help) {
     console.log(HELP.trim());
     return 0;
@@ -830,10 +858,10 @@ async function main(): Promise<number> {
         // the folder carried through, and for a flat case this is the file name.
         golden: relative(c.dir, blessTo ?? c.golden),
         actual: relative(c.dir, c.actual),
-        report: join('results', 'report.md'),
-        diffJson: join('results', 'diff.json'),
-        differences: join('results', 'differences.xlsx'),
-        compared: join('results', 'compared.xlsx'),
+        report: join(args.results, 'report.md'),
+        diffJson: join(args.results, 'diff.json'),
+        differences: join(args.results, 'differences.xlsx'),
+        compared: join(args.results, 'compared.xlsx'),
       },
     };
 
@@ -844,8 +872,40 @@ async function main(): Promise<number> {
 
     const { head, path } = headline(c, spec.reportType, label);
 
+    // Excel works the formulas out first, on copies, so the comparison has
+    // values rather than formula text alone. The inputs are left as they
+    // arrived; `names` is repointed at the copies, which sit under the results
+    // folder and are cleared with it.
+    let recalculated = false;
+    let recalcActual = '';
+    if (args.recalc) {
+      try {
+        const into = join(c.dir, args.results, 'recalculated');
+        const pair = await recalculatePair(c.golden, c.actual, into);
+        recalcActual = relative(c.dir, pair.actual);
+        options.names = {
+          ...options.names!,
+          golden: relative(c.dir, pair.golden),
+          actual: recalcActual,
+        };
+        recalculated = true;
+        options.recalculated = true;
+      } catch (e) {
+        // Never fall back to comparing the files as they arrived: the run would
+        // find far less than it promised to look for, and every silence would
+        // read as a pass.
+        process.stdout.write(`${head}
+    ${(e as Error).message}
+
+`);
+        failed++;
+        continue;
+      }
+    }
+
     try {
-      const result = await runCase(c.actual, c.dir, options);
+      const against = recalculated ? join(c.dir, recalcActual) : c.actual;
+      const result = await runCase(against, c.dir, options);
       if (!result.blessed && !result.ok) failed++;
       if (result.blessed && blessTo) await rm(c.golden, { force: true });
 
@@ -856,6 +916,7 @@ async function main(): Promise<number> {
       lines.push(result.blessed && blessTo
         ? `golden replaced by ${basename(c.actual)}, and ${basename(c.golden)} removed`
         : result.summary);
+      if (recalculated) lines.push('recalculated by Excel before comparing');
       if (skew) lines.push(`! ${skew}`);
       // Layer 2 does not decide the outcome, but a case that passed while
       // something changed where nobody was looking is the one thing worth
