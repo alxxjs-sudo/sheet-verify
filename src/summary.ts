@@ -29,8 +29,13 @@ export interface CaseRecord {
   verdict: CaseVerdict;
   /** One-line result, as the run log prints it. */
   summary: string;
-  sheetsCompared?: number;
-  sheetsFailing?: number;
+  /**
+   * Counted per *table*, not per sheet: a sheet holding four tables
+   * contributes four. Named accordingly, because the one-line summary once
+   * said "33 sheets failing" of a workbook with 22 sheets in it.
+   */
+  tablesCompared?: number;
+  tablesFailing?: number;
   tablesNotCompared?: number;
   /** Differing cells layer 1 never looked at. The number worth watching. */
   uncheckedDiffering?: number;
@@ -151,8 +156,8 @@ const COLUMNS = [
   { header: 'Case folder', key: 'name', width: 34 },
   { header: 'What it is', key: 'label', width: 52 },
   { header: 'Result', key: 'summary', width: 46 },
-  { header: 'Sheets compared', key: 'sheetsCompared', width: 16 },
-  { header: 'Sheets failing', key: 'sheetsFailing', width: 14 },
+  { header: 'Tables compared', key: 'tablesCompared', width: 16 },
+  { header: 'Tables failing', key: 'tablesFailing', width: 14 },
   { header: 'Tables not compared', key: 'tablesNotCompared', width: 19 },
   { header: 'Unchecked differing', key: 'uncheckedDiffering', width: 19 },
   { header: 'Recalculated', key: 'recalculated', width: 13 },
@@ -237,8 +242,8 @@ export async function writeSummaryWorkbook(
         c.name,
         c.label ?? '',
         c.summary,
-        c.sheetsCompared ?? '',
-        c.sheetsFailing ?? '',
+        c.tablesCompared ?? '',
+        c.tablesFailing ?? '',
         c.tablesNotCompared ?? '',
         c.uncheckedDiffering ?? '',
         c.recalculated ? 'yes' : '',

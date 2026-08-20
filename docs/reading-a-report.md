@@ -219,7 +219,7 @@ The markdown opens with a table of every type and its counts, then a section per
 type listing each case with its label and result, failures first. The workbook
 has an **Overview** sheet with the same table plus a totals row, and one sheet
 per report type with more columns than the markdown carries — sheets compared,
-sheets failing, tables not compared, unchecked differing cells, whether the run
+tables failing, tables not compared, unchecked differing cells, whether the run
 was recalculated, and the path to each case's own report.
 
 **Watch the "Unchecked differing" column.** It counts cells that differ and

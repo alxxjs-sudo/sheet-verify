@@ -229,7 +229,7 @@ export function formatWorkbookReport(w: WorkbookDiffResult, opts: ReportOptions 
     for (const s of review) {
       if (s.status === 'added') out.push(`  + sheet "${s.label}" — new, not compared`);
       else if (s.status === 'skipped') out.push(`  ? table "${s.label}" — ${s.reason}`);
-      else out.push(`  ~ sheet "${s.label}" — ${summarize(s.diff!)}`);
+      else out.push(`  ~ table "${s.label}" — ${summarize(s.diff!)}`);
     }
     for (const m of w.sheetSchema.moved) {
       out.push(`  ~ sheet "${m.sheet}" moved ${m.from} → ${m.to}`);
@@ -244,23 +244,30 @@ export function formatWorkbookReport(w: WorkbookDiffResult, opts: ReportOptions 
 
 /** One-line summary of a workbook diff, for test titles and CI logs. */
 export function summarizeWorkbook(w: WorkbookDiffResult): string {
+  // Two units, and mixing them is how "33 sheets failing" appeared on a report
+  // holding 22 sheets. `sheetSchema` counts sheets -- a sheet added, removed or
+  // moved is a sheet. `w.sheets` holds one entry per *table*, so a workbook of
+  // 22 sheets with several tables on some of them has 49 of them, and counting
+  // those as sheets overstates the damage and cannot be reconciled with the
+  // file by anyone reading it.
   const sheets = (n: number) => `${n} sheet${n === 1 ? '' : 's'}`;
+  const tables = (n: number) => `${n} table${n === 1 ? '' : 's'}`;
   if (w.ok && !w.reviewOnly) return 'identical';
   const bits: string[] = [];
   if (w.errors.length) bits.push(`${w.errors.length} integrity`);
   if (w.sheetSchema.removed.length) bits.push(`${sheets(w.sheetSchema.removed.length)} removed`);
   const failed = w.sheets.filter((s) => s.status === 'compared' && !s.diff!.ok);
-  if (failed.length) bits.push(`${sheets(failed.length)} failing`);
+  if (failed.length) bits.push(`${tables(failed.length)} failing`);
   if (w.sheetSchema.added.length) bits.push(`${sheets(w.sheetSchema.added.length)} added`);
   const skipped = w.sheets.filter((s) => s.status === 'skipped').length;
-  if (skipped) bits.push(`${sheets(skipped)} not compared`);
+  if (skipped) bits.push(`${tables(skipped)} not compared`);
   if (w.sheetSchema.moved.length) bits.push(`${sheets(w.sheetSchema.moved.length)} moved`);
 
   // Tables that changed without a defect -- an inserted column, say. Without
   // this a schema-only release reads as "no differences", which is wrong: it
   // passed, but something did change and the summary is what most people read.
   const review = w.sheets.filter((s) => s.diff?.reviewOnly).length;
-  if (review) bits.push(`${review} table${review === 1 ? '' : 's'} to review`);
+  if (review) bits.push(`${tables(review)} to review`);
 
   return bits.join(', ') || 'no differences';
 }

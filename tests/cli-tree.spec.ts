@@ -240,7 +240,7 @@ test.describe('a tree of report types', () => {
 
     const { out } = cli(root);
     // The case is its own path, so the line under the headline would repeat it.
-    expect(out).toContain('✗ case_001 · a premium that moved\n    1 sheet failing');
+    expect(out).toContain('✗ case_001 · a premium that moved\n    1 table failing');
   });
 
   test('a tree that names neither reads as the path alone', async () => {

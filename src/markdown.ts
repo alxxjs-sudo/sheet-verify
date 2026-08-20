@@ -741,7 +741,11 @@ export function formatMarkdownReport(
 
   const review = diff.sheets.filter((s) => s.status === 'added' || s.status === 'skipped');
   if (review.length || diff.sheetSchema.moved.length) {
-    out.push('', '## Sheets to review', '');
+    // Not "Sheets to review": the list holds added *sheets*, tables that were
+    // not compared, and moved *sheets*. Two of the three are not sheets, and
+    // naming the section after one of them is what let "33 sheets failing"
+    // pass unremarked for as long as it did.
+    out.push('', '## What to review', '');
     for (const s of review) {
       out.push(s.status === 'added'
         ? `- added: **${cell(s.label)}** — not in the golden, so nothing to compare against`

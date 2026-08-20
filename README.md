@@ -85,7 +85,7 @@ npx sheet-verify
 ```
 ✗ Global Standard Cat Report · case_001 · a peril column added mid-table
     global_standard_cat_report/case_001
-    1 sheet failing, 1 table to review
+    1 table failing, 1 table to review
     …/case_001/results/report.md
 
 1 case, 1 failing
@@ -183,7 +183,7 @@ The table is reported instead, so the gap is visible rather than silent. In
 `report.md`:
 
 ```
-## Sheets to review
+## What to review
 
 - not compared: **Summary** — no keyColumns configured for this table
 ```

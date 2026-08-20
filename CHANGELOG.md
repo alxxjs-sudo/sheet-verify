@@ -4,6 +4,38 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.7.1 — 2026-08-20
+
+### "33 sheets failing" on a report with 22 sheets
+
+Reported from a real run, and the number was not wrong -- the noun was. There
+are two units in play and the one-line summary mixed them.
+
+`sheetSchema` counts sheets: a sheet added, removed or moved is a sheet.
+`w.sheets` holds one entry **per table**, so a workbook of 22 sheets with
+several tables on some of them has 49 of them. Counting those as sheets
+overstates the damage and, worse, cannot be reconciled against the file by
+anyone reading it -- which is exactly what happened.
+
+The inconsistency was sitting inside the same function. `review` counts that
+same collection and has always called them tables; `failed` and `skipped` called
+them sheets. So a summary could read "33 sheets failing, 3 tables to review"
+with both numbers drawn from the same list.
+
+Now:
+
+    1 sheet removed, 2 tables failing, 1 sheet moved, 1 table to review
+
+Sheets where they are sheets, tables where they are tables. The same correction
+reaches the run summary's columns, which were `Sheets compared` / `Sheets
+failing` and are now `Tables compared` / `Tables failing`, and `report.md`'s
+**Sheets to review** heading, which listed added *sheets*, uncompared *tables*
+and moved *sheets* -- two of the three not sheets. It is **What to review** now.
+
+`report.md` was right throughout: it has always said "tables compared" and
+"tables not compared". Only the one-liner was wrong, which is the line that
+reaches the run log and the run summary, and therefore the one most people read.
+
 ## 1.7.0 — 2026-08-20
 
 ### `npm run summary`: rebuild the overview without re-comparing

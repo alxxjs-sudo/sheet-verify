@@ -74,7 +74,7 @@ test.describe('verifyWorkbook', () => {
 
     expect(d.sheets.find((s) => s.sheet === 'Policies')!.diff!.ok).toBe(true);
     expect(d.sheets.find((s) => s.sheet === 'Regions')!.diff!.ok).toBe(true);
-    expect(summarizeWorkbook(d)).toContain('1 sheet failing');
+    expect(summarizeWorkbook(d)).toContain('1 table failing');
   });
 
   test('a new sheet is noted rather than compared, and does not fail the run', async () => {

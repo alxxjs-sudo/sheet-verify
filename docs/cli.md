@@ -42,7 +42,7 @@ Cases are named by their path, since `case_001` will exist under every type:
 ```
 ✗ Global Standard Cat Report · case_002 · three columns inserted into Geocoding
     global_standard_cat_report/case_002
-    1 sheet failing
+    1 table failing
 ```
 
 Targeting a subfolder runs only what is under it, but still applies the
@@ -129,7 +129,7 @@ Two keys change nothing about the comparison and a great deal about reading it.
 ```
 ✗ Validation Report · case_003 · an extra Cat Model Version row shifts the whole perils block down
     validation_report/case_003
-    1 sheet failing
+    1 table failing
 ```
 
 The label also titles that case's `report.md`, with the folder name kept
