@@ -180,6 +180,31 @@ sorted to the bottom.
 A run given `--results <name>` puts its summary in `!summary/<name>/`, so a
 plain run and a `--recalc` run keep both instead of one overwriting the other.
 
+### Keeping it honest
+
+The file sits at the tree root and describes *the run*, so a run narrowed to one
+report type replaces the last full one. That would leave "3 case(s)" reading as
+the size of the tree, so a narrowed run says what it was:
+
+> **Scoped run — `facility_report` only.** Cases elsewhere in the tree were not
+> compared and are not represented below.
+
+It is written even for a single case, for the same reason: skipping it would
+leave the previous run's summary in place, claiming thirty-four cases when one
+was just compared.
+
+To get the whole tree back without re-comparing anything:
+
+```bash
+npm run summary
+```
+
+That rebuilds `!summary/` from the `diff.json` each case's last run left behind
+— the whole tree however narrow the last run was, and instant where re-running
+is a minute, or half an hour with `--recalc`. It says so at the top, and a case
+with no results on disk is listed as **never run** rather than left out: a case
+missing from an overview is indistinguishable from a case that passed.
+
 Every other artefact describes one case, which is the right shape for fixing
 something and the wrong shape for the question asked first: **how did the run
 go?** That answer used to live only in terminal scrollback, where it is gone as

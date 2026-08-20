@@ -1,6 +1,6 @@
 {
   "name": "sheet-verify",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "Schema-drift-tolerant comparison for generated Excel/CSV outputs, with a Playwright matcher.",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,6 +24,8 @@
     "compare": "node dist/cli.js",
     "prerecalc": "npm run build",
     "recalc": "node dist/cli.js --recalc",
+    "presummary": "npm run build",
+    "summary": "node dist/cli.js --summary",
     "prespec": "npm run build",
     "spec": "node dist/cli.js --print-spec",
     "prewrite:meta": "npm run build",

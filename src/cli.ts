@@ -64,13 +64,15 @@ interface Args {
   recalc: boolean;
   /** Folder each case writes its artefacts into. Default `results`. */
   results: string;
+  /** Rebuild the run summary from results on disk, comparing nothing. */
+  summaryOnly: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     target: '', bless: false, printSpec: false, writeMeta: false, writeExpect: false,
     ledger: 'differences', sweep: true, bare: false, help: false,
-    recalc: false, results: RESULT_DIR,
+    recalc: false, results: RESULT_DIR, summaryOnly: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
@@ -82,6 +84,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--no-sweep') args.sweep = false;
     else if (a === '--bare') args.bare = true;
     else if (a === '--recalc') args.recalc = true;
+    else if (a === '--summary') args.summaryOnly = true;
     else if (a === '--results') args.results = argv[++i] ?? RESULT_DIR;
     else if (a.startsWith('--results=')) args.results = a.slice(10);
     else if (a === '--ledger') args.ledger = argv[++i] as LedgerScope;
@@ -226,6 +229,9 @@ OPTIONS
                      Windows with Excel installed, and Excel must be closed
   --results <name>   folder each case writes into. Default "results". Use it to
                      keep a plain run and a --recalc run side by side
+  --summary          rebuild !summary/ from the results already on disk and
+                     stop. Compares nothing, so it is instant -- and it covers
+                     the whole tree however narrow the last run was
   -h, --help         this text
 
 EXIT CODE
@@ -808,6 +814,74 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  // Rebuilt from what each case's last run left behind, comparing nothing.
+  //
+  // Two things make this worth having. A run narrowed to one report type
+  // overwrites the tree-wide summary with its own three cases, and a run of a
+  // single case writes no summary at all -- so the overview drifts out of date
+  // by ordinary use. And rebuilding is instant where re-comparing the tree is
+  // a minute, or half an hour with --recalc.
+  //
+  // It walks the whole tree whatever the target was, because a partial summary
+  // is the problem rather than the fix.
+  if (args.summaryOnly) {
+    const all = await findCases(root, root);
+    const records: CaseRecord[] = [];
+    for (const c of all.cases) {
+      // Config layers only -- no detectSpec, which would open both workbooks.
+      // The two things wanted here, the report type and the label, are written
+      // in the config and never detected, so reading the files would buy
+      // nothing and cost the speed that makes this worth having.
+      const layers = await configLayers(root, c.dir);
+      const spec = layers.reduce((acc, l) => mergeSpecs(acc, l.spec), {} as WorkbookSpec);
+      const type = spec.reportType ?? DISPLAY(relative(root, dirname(c.dir))) ?? '(untyped)';
+      const label = layers.find((l) => basename(l.path) === 'case.json')?.spec.label;
+      // Read plainly, not through readJson: that one validates a *config* and
+      // rejects unknown keys, so every diff.json threw and every case looked
+      // like it had never been run.
+      const diffPath = join(c.dir, resultDir, 'diff.json');
+      const diff = await readFile(diffPath, 'utf8')
+        .then((t) => JSON.parse(t) as WorkbookDiffResult)
+        .catch(() => null);
+      if (!diff) {
+        records.push({
+          reportType: type, name: c.name, label,
+          verdict: 'could not run', summary: 'never run — no results on disk',
+        });
+        continue;
+      }
+      const compared = diff.sheets.filter((o) => o.status === 'compared');
+      records.push({
+        reportType: type,
+        name: c.name,
+        label,
+        verdict: diff.ok ? 'passed' : 'failed',
+        summary: diff.ok ? 'identical' : `${compared.filter((o) => o.diff && !o.diff.ok).length} sheet(s) failing`,
+        sheetsCompared: compared.length,
+        sheetsFailing: compared.filter((o) => o.diff && !o.diff.ok).length,
+        tablesNotCompared: diff.sheets.length - compared.length,
+        report: join(c.dir, resultDir, 'report.md'),
+      });
+    }
+    if (!records.length) {
+      console.error(`sheet-verify: no cases under ${root}`);
+      return 1;
+    }
+    const into = resultDir === RESULT_DIR
+      ? join(root, SUMMARY_DIR)
+      : join(root, SUMMARY_DIR, resultDir);
+    await mkdir(into, { recursive: true });
+    const { markdown } = await writeSummary(join(into, 'run-summary'), records, new Date(), {
+      rebuilt: true,
+    });
+    const missing = records.filter((r) => r.verdict === 'could not run').length;
+    console.log(
+      `${DISPLAY(relative(process.cwd(), markdown))} — ${records.length} case(s)` +
+      (missing ? `, ${missing} with no results on disk` : ''),
+    );
+    return 0;
+  }
+
   if (args.writeMeta) {
     const path = join(target, 'meta.json');
     const existing = await readJson(path).catch(() => ({} as WorkbookSpec));
@@ -994,13 +1068,15 @@ async function main(): Promise<number> {
     }
   }
 
-  // One view of the whole run, grouped by report type. Written for two or more
-  // cases only: for a single case the case's own report already is this, and a
-  // second file saying the same thing in fewer words is clutter.
+  // One view of the whole run, grouped by report type, at the root of the tree
+  // rather than inside any case, because it belongs to none of them.
   //
-  // It goes at the root of what was run, beside the tree rather than inside any
-  // case, because it belongs to none of them.
-  if (records.length > 1) {
+  // Written for a single case too, though the case's own report says more. The
+  // alternative is worse: this file sits at the root describing "the run", so
+  // skipping it leaves the *previous* run's summary in place, claiming
+  // thirty-four cases when one was just compared. A stale overview reads as
+  // current, which is the failure this whole tool exists to prevent.
+  if (records.length) {
     // In its own folder, not beside the tree. A workbook at the root makes the
     // root itself look like a case with no golden beside it, and the next run
     // refuses to start: "no golden file. Rename one of [run-summary.xlsx]".
@@ -1012,7 +1088,10 @@ async function main(): Promise<number> {
       ? join(root, SUMMARY_DIR)
       : join(root, SUMMARY_DIR, resultDir);
     await mkdir(into, { recursive: true });
-    const { markdown } = await writeSummary(join(into, 'run-summary'), records);
+    const scoped = DISPLAY(relative(root, target));
+    const { markdown } = await writeSummary(join(into, 'run-summary'), records, new Date(), {
+      target: scoped && scoped !== '.' ? scoped : undefined,
+    });
     console.log(`
 ${DISPLAY(relative(process.cwd(), markdown))} — and the .xlsx beside it`);
   }

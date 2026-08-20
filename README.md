@@ -369,6 +369,7 @@ Every script, and what it does:
 | | |
 | `compare -- <case>` | compare a case, a report type, or the whole tree |
 | `recalc -- <case>` | the same, with Excel working the formulas out first |
+| `summary` | rebuild `!summary/` from results already on disk, comparing nothing |
 | `spec -- <case>` | print what detection made of the files, and stop |
 | `bless -- <case>` | accept the new report as the golden output |
 | | |

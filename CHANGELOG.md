@@ -4,6 +4,38 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.7.0 — 2026-08-20
+
+### `npm run summary`: rebuild the overview without re-comparing
+
+The run summary was only ever a side effect of a comparison, and that left it
+drifting out of date through ordinary use. A run narrowed to one report type
+replaced the tree-wide summary with its own three cases, and a single-case run
+wrote nothing at all -- so the file at the root went on claiming thirty-four
+cases while describing a run that was nothing of the sort.
+
+Three changes, and the first two matter more than the new flag.
+
+**A narrowed run says it was narrowed.** Without it, "3 case(s)" reads as the
+size of the tree rather than the size of the run.
+
+**A single-case run writes the summary too.** The case's own report says more,
+but skipping it left the *previous* run's summary sitting at the root, current
+to look at and wrong.
+
+**`--summary` rebuilds from what is already on disk**, comparing nothing. It
+walks the whole tree however narrow the last run was, reads each case's
+`diff.json`, and takes about three seconds where re-running the tree is a minute
+and `--recalc` is half an hour. A case that has never been run is listed as
+**never run** rather than omitted -- a case missing from an overview is
+indistinguishable from a case that passed.
+
+Two things bit while building it. `readJson` validates a *config* and rejects
+unknown keys, so reading `diff.json` through it threw on every case and the
+rebuild reported all thirty-four as never run; it reads plainly now. And the
+scope note landed without a blank line before it, which glued it to the line
+above in every markdown renderer.
+
 ## 1.6.1 — 2026-08-20
 
 ### The summary folder sorts to the top

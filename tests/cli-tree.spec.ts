@@ -609,4 +609,51 @@ test.describe('a tree of report types', () => {
     // stale results/ folder does.
     await expect(access(join(ROOT, '!summary', 'run-summary.md'))).rejects.toThrow();
   });
+
+  test('a scoped run says it was scoped, instead of looking like the whole tree', async () => {
+    await buildTree();
+    cli(ROOT);
+    const whole = await readFile(join(ROOT, '!summary', 'run-summary.md'), 'utf8');
+    expect(whole).not.toContain('Scoped run');
+
+    // The summary lives at the tree root whatever was run, so a narrowed run
+    // replaces the last full one -- and "1 case(s)" then reads as the size of
+    // the tree rather than the size of the run.
+    cli(join(ROOT, 'reports', 'srq'));
+    const scoped = await readFile(join(ROOT, '!summary', 'run-summary.md'), 'utf8');
+    expect(scoped).toContain('Scoped run');
+    expect(scoped).toContain('srq');
+  });
+
+  test('--summary rebuilds the whole tree from results on disk, comparing nothing', async () => {
+    await buildTree();
+    cli(ROOT);
+    // Narrow the summary, then rebuild it.
+    cli(join(ROOT, 'reports', 'srq'));
+    expect(await readFile(join(ROOT, '!summary', 'run-summary.md'), 'utf8'))
+      .toContain('Scoped run');
+
+    const { out, code } = cli(ROOT, '--summary');
+    expect(code).toBe(0);
+    const md = await readFile(join(ROOT, '!summary', 'run-summary.md'), 'utf8');
+    expect(md).toContain('Rebuilt from the results already on disk');
+    expect(md).not.toContain('Scoped run');
+    // Every case in the tree, not just the last thing that was run.
+    expect(md).toContain('## reports/global_standard_cat');
+    expect(md).toContain('## reports/srq');
+    expect(out).toContain('3 case(s)');
+  });
+
+  test('--summary says which cases have never been run', async () => {
+    await buildTree();
+    // Run one case only, so the others have no results on disk at all.
+    cli(join(ROOT, 'reports', 'srq', 'case_001'));
+
+    const { out } = cli(ROOT, '--summary');
+    expect(out).toContain('with no results on disk');
+    const md = await readFile(join(ROOT, '!summary', 'run-summary.md'), 'utf8');
+    // Reported rather than omitted: a case missing from the overview is
+    // indistinguishable from a case that passed.
+    expect(md).toContain('never run');
+  });
 });

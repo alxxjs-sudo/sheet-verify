@@ -65,7 +65,22 @@ const MARK: Record<CaseVerdict, string> = {
   passed: '✓', failed: '✗', blessed: '•', 'could not run': '!',
 };
 
-export function summaryMarkdown(cases: CaseRecord[], when = new Date()): string {
+export interface SummaryScope {
+  /**
+   * What the run covered, relative to the tree root -- empty for the whole
+   * tree. A run narrowed to one report type overwrites this file, and a reader
+   * who does not know that reads "3 case(s)" as the size of the tree.
+   */
+  target?: string;
+  /** Rebuilt from results already on disk rather than by a fresh comparison. */
+  rebuilt?: boolean;
+}
+
+export function summaryMarkdown(
+  cases: CaseRecord[],
+  when = new Date(),
+  scope: SummaryScope = {},
+): string {
   const groups = grouped(cases);
   const failed = tally(cases, 'failed') + tally(cases, 'could not run');
 
@@ -82,6 +97,19 @@ export function summaryMarkdown(cases: CaseRecord[], when = new Date()): string 
     '| report type | cases | passed | failed | could not run |',
     '| --- | ---: | ---: | ---: | ---: |',
   ];
+
+  // This file is written at the tree root whatever was run, so a narrowed run
+  // replaces the last full one. Unsaid, "3 case(s)" reads as the size of the
+  // tree rather than the size of the run.
+  const note = scope.target
+    ? `> **Scoped run — \`${scope.target}\` only.** Cases elsewhere in the tree were ` +
+      'not compared and are not represented below. Run `npm run summary` to rebuild ' +
+      'the whole tree from the results already on disk.'
+    : scope.rebuilt
+      ? '> Rebuilt from the results already on disk rather than from a fresh ' +
+        'comparison. Each case is as its own last run left it.'
+      : '';
+  if (note) out.splice(5, 0, '', note);
 
   for (const [type, list] of groups) {
     const bad = tally(list, 'failed');
@@ -234,10 +262,11 @@ export async function writeSummary(
   base: string,
   cases: CaseRecord[],
   when = new Date(),
+  scope: SummaryScope = {},
 ): Promise<{ markdown: string; workbook: string }> {
   const markdown = `${base}.md`;
   const workbook = `${base}.xlsx`;
-  await writeFile(markdown, summaryMarkdown(cases, when), 'utf8');
+  await writeFile(markdown, summaryMarkdown(cases, when, scope), 'utf8');
   await writeSummaryWorkbook(workbook, cases, when);
   return { markdown, workbook };
 }
