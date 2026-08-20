@@ -151,7 +151,7 @@ test.describe('detectWorkbook', () => {
     const put = (addr: string, v: unknown) => { ws.getCell(addr).value = v as never; };
     put('A1', 'Report ID'); put('B1', 4542);
     put('A2', 'Report Creator'); put('B2', 'S. Arya');
-    put('A3', 'Edison Version'); put('B3', '5.0.2');
+    put('A3', 'Portal Version'); put('B3', '5.0.2');
 
     put('H1', 'Return Year'); put('I1', 'Start'); put('J1', 'End');
     for (let i = 0; i < 5; i++) {
@@ -269,10 +269,10 @@ test.describe('a block with no header row', () => {
 
     const pairs: [string, string | number][] = [
       ['Report ID', 4537],
-      ['Pro-Forma Report Name', reportName],
-      ['View Of Risk', 'RMS_v18.1'],
+      ['Quarterly Report Name', reportName],
+      ['View Of Risk', 'Model v4.2'],
       ['Report Creator', 'A Person'],
-      ['Edison Version', '5.0.2'],
+      ['Portal Version', '5.0.2'],
     ];
     for (const [label, value] of pairs) ws.addRow([label, value]);
     // Painted down the label column on every row, which is how these reports

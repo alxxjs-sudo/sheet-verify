@@ -237,7 +237,6 @@ question:
 | work out *which* correction a report needs, and fix a mis-detected table | **[docs/detection-tuning.md](docs/detection-tuning.md)** |
 | read `report.md`, the ledgers, and the verdict | **[docs/reading-a-report.md](docs/reading-a-report.md)** |
 | call it from a test suite or from code | **[docs/api.md](docs/api.md)** |
-| see what one case is for | **[docs/case-labels.md](docs/case-labels.md)** |
 
 The four commands worth knowing now:
 
@@ -251,9 +250,14 @@ npx sheet-verify --bless               # accept the differences as the new golde
 ## Notes and limits
 
 - **Cached values.** Nothing here evaluates formulas. Comparison uses the value
-  the generator wrote plus the formula text. If the generator writes formulas
-  with no cached result, value comparison has nothing to check — hence
-  `requireCachedValues`, on by default.
+  the generator wrote plus the formula text, so a generator that writes formulas
+  with no stored result leaves value comparison nothing to check — and that is
+  the normal case, not a corner one: on one real tree **every one of 379,959
+  formula cells** arrived without a result. Two answers, neither of them an
+  evaluator. [`--recalc`](docs/cli.md#recalculating-before-comparing) has Excel
+  work them out first, which is exact but needs Windows. Failing that, the
+  **Will recalculate** sheet in `differences.xlsx` names the cells that would
+  move and the change driving each — which cells, not by how much.
 - **Cross-sheet formulas.** References to other sheets stay in A1 form, since
   this sheet's headers say nothing about another sheet's layout. A column moved
   on a *referenced* sheet will show as a formula difference. Resolving those to
@@ -284,8 +288,24 @@ npx sheet-verify --bless               # accept the differences as the new golde
   `cell.formula` getter; reading `cell.value.formula` instead returns the
   master's *address* for every filled cell, which silently hides any formula
   defect in the column. There is a regression test pinning this.
-- **ExcelJS is dormant.** No release since October 2023. It is still the most
-  capable option, which is why the reader sits behind `SheetReader`.
+- **Computed references defeat impact tracing.** The **Will recalculate** sheet
+  finds what a formula reads by parsing its references, so a function that
+  *computes* which cell it reads is opaque to it: `OFFSET($A$1, MATCH(...), 0)`
+  is recorded as reading `$A$1` while it reads wherever the arithmetic lands,
+  and `INDIRECT` is worse. Not a corner case either — **62,406 of those 379,959
+  formulas** were `OFFSET`. Changes reaching a cell that way are not listed, and
+  cannot be. `--recalc` has no such gap, because Excel does not reason about
+  dependencies, it computes them.
+- **`--recalc` needs Windows, Excel installed, and Excel closed.** It drives
+  Excel through COM, and COM attaches to a running session rather than starting
+  its own — so a run that quit it would close your workbooks and discard unsaved
+  work. The tool checks and refuses. It refuses on the other two counts as well
+  rather than comparing the files as they arrived, because finding less than the
+  flag promised would read as a pass.
+- **ExcelJS is barely maintained.** The last stable release is 4.4.0, October
+  2023; there has been one prerelease since, in December 2024, and nothing after
+  it. It is still the most capable option, which is why the reader sits behind
+  `SheetReader`.
 - **Do not `npm install xlsx`.** The npm copy is stuck at 0.18.5 and carries two
   high-severity advisories whose fixes exist only on SheetJS's own CDN.
 

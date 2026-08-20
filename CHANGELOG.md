@@ -4,6 +4,51 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.5.1 — 2026-08-20
+
+### Nothing identifying ships with the package
+
+`docs/` is listed in `package.json` `files`, so everything in it goes to anyone
+who installs this. `docs/case-labels.md` was in there, and it records real
+report names from the source system. It has moved to `notes/`, which does not
+ship, and carries a header saying why.
+
+Product and system names -- a portal, a model vendor, three report-type names --
+are out of the docs, the source comments and the fixtures, replaced with neutral
+equivalents that make the same point. A wildcard covering `Summary Report Name`,
+`Quarterly Report Name` and `Regional Report Name` illustrates itself exactly as
+well as the real three did. Two fixtures also carried a real person's name,
+lifted from a report and used as filler; the tests assert on the label and never
+the value, so there was no reason to keep it.
+
+`notes/case-labels.md` is now the only file in the repository holding source
+names, deliberately: stripping them would destroy what it is for, which is
+matching a label back to a re-download. It says so at the top.
+
+### The limitations list caught up with the tool
+
+Reviewed every entry against what actually shipped this week.
+
+**Cached values** was the big one and is now answered twice over -- `--recalc`
+for the exact numbers, and the "Will recalculate" sheet for which cells move
+when Excel is not available. The entry also carries the measurement that makes
+the point: not *some* generators write formulas without results, but every one
+of 379,959 formula cells on a real tree.
+
+**Two limits added that nothing had written down.** Computed references --
+`OFFSET`, `INDIRECT` -- are opaque to the impact graph, and 62,406 of those
+formulas are `OFFSET`, so this is load-bearing rather than theoretical. And
+`--recalc` needs Windows, Excel, and Excel closed, each of which it refuses on
+rather than quietly comparing the files as they arrived.
+
+**One entry was simply out of date.** "ExcelJS is dormant. No release since
+October 2023" -- checked against the registry: 4.4.0 is indeed October 2023, but
+there was a `4.4.1-prerelease.0` in December 2024. Reworded, and it makes the
+point better: twenty months have passed since even the prerelease.
+
+The rest were re-checked and still hold: `endRow` is still Excel-only, the
+unknown-key check is still top level only, table numbers are still positional.
+
 ## 1.5.0 — 2026-08-20
 
 ### Scripts for the things that were being typed out
@@ -55,7 +100,7 @@ already at the destination and already xlsx, so re-specifying the format was one
 more thing to get wrong.
 
 Verified end to end on real reports: a golden with **94 formulas and 0 stored
-results** comes back with 41, the originals are untouched, and on one pro-forma
+results** comes back with 41, the originals are untouched, and on one quarterly
 case the run went from **2 value differences to 5** -- the extra three being
 exactly what the "Will recalculate" sheet had predicted. That sheet correctly
 disappears from a recalculated run, having nothing left to predict.
@@ -158,7 +203,7 @@ Where that value is the report's own name or id, it differs between any two runs
 by construction. The column then pairs with nothing in the other file, and every
 row of the block arrives as one column removed and another added -- thirty
 findings for a fifteen-row block, with the real change buried among them. The
-rows above the chosen header were not compared at all: on a pro-forma report,
+rows above the chosen header were not compared at all: on a quarterly report,
 `Report ID` and the report name sat outside every table, so an edit to either
 was invisible to layer 1.
 
@@ -290,8 +335,8 @@ can show evidence for, and comments for the rest:
   header row is passed over: "Program ID" as the 28th column heading of a table
   is not run identity, and listing it would drop that column out of the
   comparison. A report type that spells its own name into the label gets the
-  wildcard form, `*Report Name`, which is what covers Facility / Pro-Forma /
-  RiskPlay in one entry. Labels found but unvarying are listed as candidates,
+  wildcard form, `*Report Name`, which is what covers Summary / Quarterly /
+  Regional in one entry. Labels found but unvarying are listed as candidates,
   not written.
 - **`defaults`** — `requireCachedValues: false` when the files really do carry
   formulas with no stored result, `fillKeyDown: true` when a sheet really does
@@ -307,7 +352,7 @@ stale, and a generated entry is indistinguishable from one somebody meant.
 
 It refuses to touch a `meta.json` that already has settings in it.
 
-On a facility report it produced `Report ID`, `*Report Name`, `Creation Date`
+On a summary report it produced `Report ID`, `*Report Name`, `Creation Date`
 and `Elapsed Processing Time` — the hand-written list plus one — and the tree
 it wrote gave the same verdicts as the hand-written config.
 
@@ -500,8 +545,7 @@ version, the as-at date behind a "Data as of …" caption.
 
 An entry is a label (`"Report ID"`, matching the cell and the value beside it,
 including a fused `="Report ID: " & id`), or a cell reference (`"Cover!A3"`).
-`*` covers a run of text, which is how one pattern reaches `Facility Report
-Name`, `RiskPlay Report Name` and `Pro-Forma Report Name`. Either form takes a
+`*` covers a run of text, which is how one pattern reaches `Summary Report Name`, `Regional Report Name` and `Quarterly Report Name`. Either form takes a
 sheet qualifier.
 
 Exclusion reaches all three consumers — the keyed comparison, the address

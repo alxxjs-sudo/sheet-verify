@@ -175,7 +175,7 @@ test.describe('report metadata', () => {
   });
 
   test('a * in a label covers however a report type spells its own name', async () => {
-    // "Facility Report Name", "RiskPlay Report Name", "Pro-Forma Report Name":
+    // "Summary Report Name", "Regional Report Name", "Quarterly Report Name":
     // one pattern, or a config that misses whichever type is added next.
     const spec: WorkbookSpec = {
       defaults: { requireCachedValues: false },

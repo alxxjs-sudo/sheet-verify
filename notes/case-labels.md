@@ -1,5 +1,13 @@
 # Case labels
 
+> **Not for publication.** This file records real report names from the source
+> system, and it is the one place in the repository that still does. It sits in
+> `notes/` rather than `docs/` for that reason: `docs/` is listed in
+> `package.json` `files` and ships to anyone who installs the package, and this
+> must not. Check this file before making the repository public or widening who
+> can read it.
+
+
 The `label` each case carried in `output_comparison/` before the report pairs
 were cleared, with the notes that recorded how a few of them were built.
 

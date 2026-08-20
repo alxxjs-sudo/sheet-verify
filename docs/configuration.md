@@ -203,8 +203,8 @@ An entry is a **label**, matched against a cell's text and taking the value
 beside it — `"Report ID"` covers `A1 "Report ID"` with `B1 4542`, and a fused
 `="Report ID: " & id` as well. Or it is a **cell reference**, `"Cover!A3"`, for
 a bare date with no label of its own. A `*` stands for a run of text, which is
-what lets one pattern cover `Facility Report Name`, `RiskPlay Report Name` and
-`Pro-Forma Report Name`. Either form takes a sheet qualifier —
+what lets one pattern cover `Summary Report Name`, `Regional Report Name` and
+`Quarterly Report Name`. Either form takes a sheet qualifier —
 `"Report Info!Report ID"` — for a word that means run identity in a header
 block and a column heading somewhere else.
 

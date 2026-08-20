@@ -98,14 +98,14 @@ test.describe('a table under a title row', () => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Loss by Contract');
 
-    ws.addRow(['ProformaOverride']);           // 1  metadata, one cell each
+    ws.addRow(['QuarterlyOverride']);           // 1  metadata, one cell each
     ws.addRow(['All values are in USD']);      // 2
     ws.addRow([]);                             // 3  blank
     ws.addRow(['Loss AEP VaR Contract']);      // 4  title, one cell
     ws.addRow(['Contract ID', 'Company', 'Layer', 'Loss']);  // 5  the header
-    ws.addRow(['199293', 'Edison', '35M xs 25M', 1000]);     // 6  data
-    ws.addRow(['199294', 'Edison', '105M xs 60M', 2000]);
-    ws.addRow(['199295', 'Edison', '197.5M xs 165M', 3000]);
+    ws.addRow(['199293', 'Portal', '35M xs 25M', 1000]);     // 6  data
+    ws.addRow(['199294', 'Portal', '105M xs 60M', 2000]);
+    ws.addRow(['199295', 'Portal', '197.5M xs 165M', 3000]);
 
     const path = join(DIR, name);
     await wb.xlsx.writeFile(path);

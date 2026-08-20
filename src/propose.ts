@@ -96,8 +96,8 @@ interface Found {
  * match it.
  *
  * A phrase at the *end* of a longer label counts, because every report type
- * spells its own name differently -- Facility Report Name, Pro-Forma Report
- * Name, RiskPlay Report Name. Those get a `*` entry, which is exactly what the
+ * spells its own name differently -- Summary Report Name, Quarterly Report
+ * Name, Regional Report Name. Those get a `*` entry, which is exactly what the
  * wildcard is for: listing each spelling by hand is how a config quietly stops
  * covering the newest one.
  */

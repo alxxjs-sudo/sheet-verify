@@ -130,7 +130,7 @@ Take the blank row above the block as the header row instead:
 
 Row 4 is blank, so the columns are named `Column A` and `Column B` — names no
 edit to the report can change — every label from row 5 down is data keyed by
-itself, and findings read `GCMP USD rate · Column B` instead of `row #13`.
+itself, and findings read `Base USD rate · Column B` instead of `row #13`.
 
 It also makes the `metadata` list work on that sheet: entries like
 `Creation Date` are matched as row labels, so they are set aside there the same

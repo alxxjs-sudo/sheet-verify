@@ -89,8 +89,8 @@ export function parseMetadata(patterns: string[] | undefined): MetadataRules {
 /**
  * A label with a `*` in it, as a regex over the start of a cell's text.
  *
- * Every report type spells its own name differently -- "Facility Report Name",
- * "RiskPlay Report Name", "Pro-Forma Report Name" -- and a config that has to
+ * Every report type spells its own name differently -- "Summary Report Name",
+ * "Regional Report Name", "Quarterly Report Name" -- and a config that has to
  * list each one is a config that silently misses the next report type someone
  * adds. `*Report Name` covers them, and nothing else in these headers.
  */

@@ -23,7 +23,7 @@ output_comparison/
   global_standard_cat_report/
     meta.json                        applies to this report type
     case_001/  case_002/  …
-  pro-forma/
+  quarterly_report/
     meta.json
     case_001/
       case.json                      only this case
@@ -46,7 +46,7 @@ Cases are named by their path, since `case_001` will exist under every type:
 ```
 
 Targeting a subfolder runs only what is under it, but still applies the
-configuration above it — so `sheet-verify pro-forma` gives the same verdicts for
+configuration above it — so `sheet-verify quarterly_report` gives the same verdicts for
 those cases as a full run.
 
 ## Two ways to name a pair
