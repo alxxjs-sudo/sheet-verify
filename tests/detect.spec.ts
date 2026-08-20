@@ -271,7 +271,7 @@ test.describe('a block with no header row', () => {
       ['Report ID', 4537],
       ['Pro-Forma Report Name', reportName],
       ['View Of Risk', 'RMS_v18.1'],
-      ['Report Creator', 'Sumedha Arya'],
+      ['Report Creator', 'A Person'],
       ['Edison Version', '5.0.2'],
     ];
     for (const [label, value] of pairs) ws.addRow([label, value]);

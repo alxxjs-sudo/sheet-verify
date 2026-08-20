@@ -325,14 +325,44 @@ positional](#notes-and-limits).
 ## Development
 
 ```bash
-npm install
-npm run build       # tsc -> dist/  (npm install does this for you)
-npm test            # 257 Playwright tests
-npm run typecheck
-npm run example     # run the six example cases
-npm run compare     # the CLI, from source
-npm run clean       # delete every results/ folder under output_comparison
+npm install         # builds dist/ on the way out, via the prepare script
+npm run check       # typecheck + doc links + 285 Playwright tests
 ```
+
+`check` is the gate: run it before pushing and it says yes or no once.
+
+**Running comparisons**
+
+```bash
+npm run compare                    # every case under ./output_comparison
+npm run compare -- <case>          # one case, or one report type
+npm run recalc -- <case>           # have Excel work the formulas out first
+npm run spec -- <case>             # what detection made of the files
+npm run bless -- <case>            # accept the new report as the golden
+```
+
+**Generating configuration**
+
+```bash
+npm run write:meta -- <type>       # a starting meta.json, from the pairs
+npm run write:expect -- <case>     # record what a run verified, as a guard
+```
+
+**Housekeeping and checks**
+
+```bash
+npm run clean                      # delete every results/ folder
+npm run clean:dry                  # list what would go, delete nothing
+npm run links                      # every internal doc link resolves
+npm run fidelity -- <file>         # what a round-trip through the reader loses
+npm run example                    # the six example cases
+npm run example:case-json          # a narrated walkthrough of needing a case.json
+```
+
+Everything that runs the CLI rebuilds `dist/` first. `dist/` is generated and
+not committed, so a stale one answers with yesterday's code and says nothing
+about having done so — the same silent-staleness hazard `clean` exists for, one
+level up. The extra couple of seconds is worth not wondering.
 
 `clean` is not needed for a correct comparison — a run overwrites its own
 artefacts. It is needed for an honest one: a case that stops failing leaves its

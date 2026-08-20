@@ -46,7 +46,7 @@ async function build(path: string, o: Build = {}): Promise<string> {
   ws.getCell('A4').value = 'Report ID';
   ws.getCell('B4').value = o.id ?? 4542;
   ws.getCell('A5').value = 'Report Creator';
-  ws.getCell('B5').value = o.creator ?? 'Sumedha Arya';
+  ws.getCell('B5').value = o.creator ?? 'A Person';
   ws.getCell('A6').value = 'Currency';
   ws.getCell('B6').value = 'USD';
 

@@ -4,6 +4,36 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.5.0 — 2026-08-20
+
+### Scripts for the things that were being typed out
+
+`package.json` carried nine scripts and the CLI had grown well past them:
+`--recalc`, `--print-spec`, `--write-meta`, `--write-expect` and `--bless` were
+all being typed as `node dist/cli.js ...` from memory. They now have names, and
+so do `clean:dry` and a new `links`.
+
+- **`npm run check`** -- typecheck, doc links and the full suite. One gate to
+  run before pushing, rather than three commands to remember in order.
+- **`npm run links`** -- a real script at `scripts/check-links.mjs` instead of
+  the throwaway one that got rewritten by hand three times in a day. It walks
+  every `](...)` across the README, the changelog and `docs/`, resolves relative
+  paths and checks that each anchor exists in the file it points at. Links and
+  headings inside fenced blocks are skipped: a fence showing sample `report.md`
+  output is not document structure, and counting its headings as anchors would
+  let a genuinely broken link pass.
+- **Everything that runs the CLI rebuilds first**, through `pre` hooks. `dist/`
+  is generated and not committed, so a stale one answers with yesterday's code
+  and says nothing about it -- the same silent-staleness hazard `clean` exists
+  for, one level up.
+
+### A person's name is out of the test fixtures
+
+Two fixtures carried a real name lifted from a report -- a creator field, used
+as filler. The repository is private, so nothing was exposed, but there was
+never a reason to carry it: the tests assert on the *label*, never the value.
+Replaced with a placeholder.
+
 ## 1.4.1 — 2026-08-20
 
 ### `--recalc` could not find the file it was given
