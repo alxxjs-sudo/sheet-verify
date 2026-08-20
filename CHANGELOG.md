@@ -4,6 +4,27 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.6.1 — 2026-08-20
+
+### The summary folder sorts to the top
+
+`results/run-summary.*` landed alphabetically between `pro-forma` and
+`riskplay_report` -- in the middle of the report types, for the one artefact
+that should be read first. It is now `!summary/`.
+
+`_summary` was the obvious choice and is wrong. Windows orders a leading
+underscore *after* letters, so it sorted to the bottom of the tree, below every
+report type -- worse than where it started. Checked rather than assumed, against
+a folder of candidates:
+
+    !summary  0-summary  00-summary  @summary  comparison_report  …  _summary  ~summary
+
+`!` comes ahead of both letters and digits, which is why it is the Windows
+convention for pinning a folder to the top.
+
+A run given `--results <name>` puts its summary in `!summary/<name>/`, so a
+plain run and a `--recalc` run keep both rather than one overwriting the other.
+
 ## 1.6.0 — 2026-08-20
 
 ### A run summary: how the whole run went, by report type

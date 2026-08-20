@@ -166,10 +166,19 @@ a removed sheet, a failed invariant, a duplicate key — and those appear in
 A run covering more than one case also writes, at the root of what was run:
 
 ```
-output_comparison/results/
+output_comparison/!summary/
   run-summary.md      how the run went — for reading and pasting into a message
   run-summary.xlsx    the same, for sorting and filtering
 ```
+
+The name starts with `!` so the folder sorts to the top of the tree, above every
+report type — this is the first thing to read after a run, and `results/` would
+land alphabetically somewhere in the middle of them. `_summary` was the obvious
+choice and is wrong: Windows orders a leading underscore *after* letters, so it
+sorted to the bottom.
+
+A run given `--results <name>` puts its summary in `!summary/<name>/`, so a
+plain run and a `--recalc` run keep both instead of one overwriting the other.
 
 Every other artefact describes one case, which is the right shape for fixing
 something and the wrong shape for the question asked first: **how did the run

@@ -105,8 +105,9 @@ output_comparison/global_standard_cat_report/case_001/
     compared.xlsx       every cell checked, a worksheet per table
 ```
 
-A run covering more than one case also writes `results/run-summary.md` and
-`run-summary.xlsx` at the root of the tree: how the run went, grouped by report
+A run covering more than one case also writes `!summary/run-summary.md` and
+`run-summary.xlsx` at the root of the tree — named to sort above every report
+type, since it is the first thing to read: how the run went, grouped by report
 type, with a sheet per type. See
 [the run summary](docs/reading-a-report.md#the-run-summary).
 

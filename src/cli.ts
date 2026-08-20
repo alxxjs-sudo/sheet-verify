@@ -27,6 +27,19 @@ const DEFAULT_ROOT = 'output_comparison';
 const RESULT_DIR = 'results';
 
 /**
+ * Where the run summary goes, at the root of whatever was run.
+ *
+ * The name is chosen to sort first, because this is the first thing anyone
+ * should read after a run and `results` would land alphabetically in the middle
+ * of the report types. `_summary` was the obvious try and is wrong: Windows
+ * orders a leading underscore *after* letters, so it sorted to the bottom --
+ * measured, not assumed. `!` sorts ahead of letters and digits alike in both
+ * Explorer and .NET, which is why it is a Windows convention for pinning a
+ * folder to the top.
+ */
+const SUMMARY_DIR = '!summary';
+
+/**
  * The folder each case writes into, from `--results`. Module state because the
  * folder walker is recursive and this is a property of the run rather than of
  * any one directory -- threading it through every frame would say less.
@@ -360,7 +373,15 @@ async function findCases(
   const subdirs = entries
     // Both names: a run writing to results-recalculated/ must still not walk
     // into the results/ folder an earlier run left, and read it as a case.
-    .filter((e) => e.isDirectory() && e.name !== RESULT_DIR && e.name !== resultDir)
+    .filter(
+      (e) =>
+        e.isDirectory() &&
+        e.name !== RESULT_DIR &&
+        e.name !== resultDir &&
+        // The summary folder holds a workbook with no golden beside it. Walked
+        // into, it reads as a broken case and stops the next run dead.
+        e.name !== SUMMARY_DIR,
+    )
     .sort((a, b) => a.name.localeCompare(b.name));
 
   // A folder holding spreadsheets, or a golden/current pair of folders, was
@@ -980,11 +1001,16 @@ async function main(): Promise<number> {
   // It goes at the root of what was run, beside the tree rather than inside any
   // case, because it belongs to none of them.
   if (records.length > 1) {
-    // Inside the results folder, not beside the tree. A workbook at the root
-    // makes the root itself look like a case with no golden beside it, and the
-    // next run refuses to start: "no golden file. Rename one of
-    // [run-summary.xlsx]". The walker already skips this folder by name.
-    const into = join(root, resultDir);
+    // In its own folder, not beside the tree. A workbook at the root makes the
+    // root itself look like a case with no golden beside it, and the next run
+    // refuses to start: "no golden file. Rename one of [run-summary.xlsx]".
+    //
+    // A named results folder gets a subfolder of its own, so a plain run and a
+    // --recalc run keep their summaries instead of one overwriting the other.
+    // The default run owns the top of _summary/, which is the common path.
+    const into = resultDir === RESULT_DIR
+      ? join(root, SUMMARY_DIR)
+      : join(root, SUMMARY_DIR, resultDir);
     await mkdir(into, { recursive: true });
     const { markdown } = await writeSummary(join(into, 'run-summary'), records);
     console.log(`

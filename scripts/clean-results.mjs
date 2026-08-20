@@ -76,7 +76,7 @@ for await (const p of resultsUnder(root)) found.push(p);
  * results folder with a golden beside it, never reaches it. A summary left from
  * the last run reads as current just as loudly as a stale results/ folder does.
  */
-for (const name of RESULT_DIRS) {
+for (const name of [...RESULT_DIRS, '!summary']) {
   const p = join(root, name);
   if (existsSync(p)) found.push(p);
 }

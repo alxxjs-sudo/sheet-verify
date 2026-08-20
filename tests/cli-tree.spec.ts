@@ -367,10 +367,10 @@ test.describe('a tree of report types', () => {
 
     const r = spawnSync('node', ['scripts/clean-results.mjs', root, '--dry'], { encoding: 'utf8' });
     // Six cases, each with a results/ folder beside its golden/ folder, plus
-    // the run-level results/ at the root holding the summary.
+    // the !summary/ folder at the root holding the run summary.
     expect(r.stdout).toContain('7 item(s) would be removed');
     expect(r.stdout.match(/would remove/g)).toHaveLength(7);
-    expect(r.stdout).toContain(join('tree-folders', 'results'));
+    expect(r.stdout).toContain(join('tree-folders', '!summary'));
   });
 
   test('malformed JSON is reported with the file that contains it', async () => {
@@ -549,7 +549,7 @@ test.describe('a tree of report types', () => {
     await buildTree();
     cli(ROOT);
 
-    const md = await readFile(join(ROOT, 'results', 'run-summary.md'), 'utf8');
+    const md = await readFile(join(ROOT, '!summary', 'run-summary.md'), 'utf8');
     expect(md).toContain('# Run summary');
     // Grouped by report type, because that is the unit people work in --
     // falling back to the folder path for a type that never named itself.
@@ -560,7 +560,7 @@ test.describe('a tree of report types', () => {
     for (const c of ['case_001', 'case_002']) expect(md).toContain(c);
 
     const wb = new ExcelJS.Workbook();
-    await wb.xlsx.readFile(join(ROOT, 'results', 'run-summary.xlsx'));
+    await wb.xlsx.readFile(join(ROOT, '!summary', 'run-summary.xlsx'));
     const names = wb.worksheets.map((w) => w.name);
     expect(names[0]).toBe('Overview');
     expect(names.length).toBeGreaterThan(1);
@@ -568,6 +568,16 @@ test.describe('a tree of report types', () => {
     const overview = wb.getWorksheet('Overview');
     const last = overview.getRow(overview.rowCount).values;
     expect(String(last[1])).toBe('All report types');
+  });
+
+  test('the summary folder sorts to the top of the tree', async () => {
+    await buildTree();
+    cli(ROOT);
+    // The first thing anyone reads after a run, so it must not be hunted for
+    // between two report types. `_summary` was the obvious name and is wrong:
+    // Windows orders a leading underscore after letters, so it sorted last.
+    const entries = (await readdir(ROOT)).sort();
+    expect(entries[0]).toBe('!summary');
   });
 
   test('the summary does not turn the tree root into a broken case', async () => {
@@ -591,12 +601,12 @@ test.describe('a tree of report types', () => {
   test('clean removes the run summary along with the results', async () => {
     await buildTree();
     cli(ROOT);
-    await access(join(ROOT, 'results', 'run-summary.md'));
+    await access(join(ROOT, '!summary', 'run-summary.md'));
 
     const r = spawnSync('node', ['scripts/clean-results.mjs', ROOT], { encoding: 'utf8' });
     expect(r.status).toBe(0);
     // A summary left from the last run reads as current just as loudly as a
     // stale results/ folder does.
-    await expect(access(join(ROOT, 'results', 'run-summary.md'))).rejects.toThrow();
+    await expect(access(join(ROOT, '!summary', 'run-summary.md'))).rejects.toThrow();
   });
 });
