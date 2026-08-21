@@ -4,6 +4,77 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.9.0 — 2026-08-20
+
+### A totals row of formulas is not a row of column names
+
+Reported from a real case as columns flagged added and removed in their
+hundreds. Detection had named the columns after a row of formulas:
+
+    headers: ["Total", "SUM(B15:B18)", "SUM(C15:C18)", "IFERROR(C14/B14,0)"]
+
+`headerName` fell back to a formula's own text when the cell had no computed
+result -- which is every formula in these reports. That was added so a heading
+*built* by a formula still names its column, and the fallback was justified as
+"stable if ugly". It is the opposite of stable: `SUM(B15:B18)` carries row
+numbers, so inserting one row above renames every column in the table and both
+files report the lot as removed and added.
+
+Worse, it made a totals row look like twenty-five names against the real header
+row's seven, so the header search preferred it -- taking the key column with it,
+which became `Total`.
+
+A formula that builds header text contains that text; one that computes a number
+does not, and has no name to give. The fallback is now the leading string
+literal or nothing.
+
+That distinction had to be split from a second use of the same function.
+Detection reads the whole sheet through it to decide which cells are *occupied*,
+and there a formula with no result is emphatically not an empty cell -- a row of
+them reading as blank splits the block it sits in. Occupancy and naming are now
+two questions with two answers.
+
+### Banded shading is not a header row
+
+The same case, another sheet: rows 32, 34, 36 and 38 fully painted, rows 31, 33,
+35 and 37 not. Zebra striping paints a row exactly the way these generators
+paint a heading, so the search took the first banded row as the header. The key
+column became `US - Northeast` -- a region name lifted from the data -- and the
+rest of the columns were named after that row's figures.
+
+Told apart by shape rather than by paint: a header row is text where its data is
+numeric, so a candidate whose numeric columns are exactly the next row's is
+data. It must hold a number itself for this to fire, or a heading of plain words
+over rows of plain words would be refused.
+
+### A numeric heading that drifted is still the same column
+
+    removed: 788321.400221      added: 788321.4002209998     gap 1.16e-10
+    removed: 33792307.66114401  added: 33792307.661144       gap 7.45e-9
+
+Columns headed by computed figures recalculate. Compared as text those are two
+different columns; a tolerance would have forgiven the same drift instantly had
+the number been a value rather than a name. Numeric headings are now canonical
+to twelve significant figures -- Excel keeps about fifteen, drift shows past
+twelve -- so drift collapses and genuinely different headings stay apart.
+
+### A block whose top row names nothing keeps its rows
+
+Fixing the above meant fewer rows qualified as headers, and a block whose header
+names fewer than two columns was being *dropped* -- 26 tables across the tree,
+silently. The rows are still there and still comparable; they just have no names
+of their own. They get positional ones now.
+
+Measured over 38 real cases: **1,313 tables compared, up from 1,290**, with
+**column churn nearly halved, 690 to 368**. Nothing lost -- tables not compared
+and integrity errors both unchanged.
+
+The 368 that remain are one case whose two files were produced differently: the
+golden carries none of its 3,721 formula results and the current carries 3,271
+of them, so a formula heading renders as a value on one side and as nothing on
+the other. That is what `npm run bare` is for, and the run already warns about
+the pair.
+
 ## 1.8.0 — 2026-08-20
 
 ### `clean` said it removed folders it had not removed

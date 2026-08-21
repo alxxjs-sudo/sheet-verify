@@ -4,7 +4,7 @@ import ExcelJS from 'exceljs';
 import { parse } from 'csv-parse/sync';
 import type { WorkbookSpec, WorkbookSheetSpec } from './types.js';
 import { CSV_SHEET } from './reader-csv.js';
-import { headerName } from './reader-excel.js';
+import { cellToken, headerName } from './reader-excel.js';
 import { numToCol } from './a1.js';
 import { openWorkbook } from './open-xlsx.js';
 
@@ -270,6 +270,14 @@ function tablesOnSheet(
    * sees a formula's result, so a column full of them cannot identify a row.
    */
   values?: string[][],
+  /**
+   * What each cell could be *called*, which is not the same as whether it holds
+   * anything. A totals row of bare SUM formulas occupies twenty-five cells and
+   * names none of them; counting those as names is what made the header search
+   * prefer it to the real header row above. Absent for CSV, where a cell is its
+   * own text.
+   */
+  names?: string[][],
 ): DetectedTable[] {
   const width = grid.reduce((w, row) => Math.max(w, row.length), 0);
   const tables: DetectedTable[] = [];
@@ -280,6 +288,8 @@ function tablesOnSheet(
 
     /** One row of the region, blanks included, so positions line up. */
     const cut = (r: number) => (grid[r] ?? []).slice(reg.c0, reg.c1 + 1);
+    /** The same row, as names rather than as occupancy. */
+    const nameCut = (r: number) => ((names ?? grid)[r] ?? []).slice(reg.c0, reg.c1 + 1);
 
     // The header is the *fullest* row near the top of the block, not
     // necessarily the first. Real reports put a title above the table -- often
@@ -324,7 +334,7 @@ function tablesOnSheet(
         fallbackWidth = cells.length;
         fallback = r;
       }
-      const named = cells.filter((v) => !NUMERIC.test(v)).length;
+      const named = nameCut(r).filter((v) => !isBlank(v) && !NUMERIC.test(v)).length;
       if (!named) continue; // a row of numbers is data however it is painted
 
       const painted = (styled?.[r] ?? []).slice(reg.c0, reg.c1 + 1).filter(Boolean).length;
@@ -348,7 +358,19 @@ function tablesOnSheet(
     // construction between two runs -- so the column matched nothing in the
     // other file and all fifteen rows reported as one column removed and
     // another added, with the real changes buried among them.
-    const noHeader = paintedByColumn(styled, grid, reg);
+    // A row that names fewer than two columns cannot be the header of a table,
+    // and dropping the block for it is the wrong answer: the rows are still
+    // there and still comparable, they just have no names of their own. That
+    // happens wherever a block's top row is formulas the generator never
+    // computed -- common enough that refusing cost 26 tables across this tree,
+    // silently, which is the one outcome worse than naming them positionally.
+    const namesEnough = (r: number) =>
+      nameCut(r).filter((v) => !isBlank(v)).length >= 2;
+
+    const noHeader =
+      paintedByColumn(styled, grid, reg) ||
+      readsAsData(grid, reg, headerAt) ||
+      !namesEnough(headerAt);
 
     // `headerRow` is the row *above* the data throughout, so a block with no
     // header is one whose header row is the row above it -- 0 when it starts
@@ -381,7 +403,7 @@ function tablesOnSheet(
       ? Array.from({ length: reg.c1 - reg.c0 + 1 }, (_, i) =>
           holdsData(i) ? `Column ${numToCol(reg.c0 + i + 1)}` : '',
         )
-      : cut(headerAt).map((h) => String(h ?? '').trim());
+      : nameCut(headerAt).map((h) => String(h ?? '').trim());
     if (headers.filter((h) => h !== '').length < 2) continue;
 
     tables.push({
@@ -461,6 +483,45 @@ function looksLikeHeading(cell: ExcelJS.Cell): boolean {
  * too -- not at all -- so without it every report that arrives as a plain grid
  * would lose its column names.
  */
+/**
+ * Whether the chosen header row is really just another row of data.
+ *
+ * The paint heuristic is defeated by banded shading. A report that fills every
+ * other row for legibility paints those rows exactly the way it paints a
+ * heading, so the search takes the first banded row as the header. On one real
+ * sheet that made the key column `US - Northeast` -- a region name, lifted from
+ * the data -- and named the rest of the columns after that row's figures, which
+ * then drifted between runs and reported the whole table as columns added and
+ * removed.
+ *
+ * Told apart by shape rather than by paint. A header row is text where its data
+ * is numeric; a data row has the same numeric columns as the row beneath it.
+ * So: if the candidate's numeric columns are exactly the next row's, it is
+ * data.
+ *
+ * The candidate must actually hold a number for this to fire. A header of plain
+ * words above rows of plain words -- `Name | City` over `Ivanov | Sofia` --
+ * matches on shape too, and there the heading is real; refusing it would strip
+ * the names off every text table in the tree.
+ */
+function readsAsData(grid: string[][], reg: Region, headerAt: number): boolean {
+  const numericAt = (r: number): string => {
+    const row = (grid[r] ?? []).slice(reg.c0, reg.c1 + 1);
+    return row.map((v, i) => (!isBlank(v) && NUMERIC.test(v) ? i : -1)).filter((i) => i >= 0).join(',');
+  };
+  const here = numericAt(headerAt);
+  if (!here) return false; // no numbers of its own: a heading of words is a heading
+
+  // The first row under it that holds anything, which is what it must differ
+  // from to be a header at all.
+  for (let r = headerAt + 1; r <= reg.r1; r++) {
+    const row = (grid[r] ?? []).slice(reg.c0, reg.c1 + 1);
+    if (row.every((v) => isBlank(v))) continue;
+    return numericAt(r) === here;
+  }
+  return false;
+}
+
 function paintedByColumn(
   styled: boolean[][] | undefined,
   grid: string[][],
@@ -500,10 +561,12 @@ function paintedByColumn(
 function gridOf(ws: ExcelJS.Worksheet): {
   text: string[][];
   values: string[][];
+  names: string[][];
   styled: boolean[][];
 } {
   const text: string[][] = [];
   const values: string[][] = [];
+  const names: string[][] = [];
   const styled: boolean[][] = [];
   const width = Math.max(ws.columnCount, 1);
 
@@ -511,24 +574,30 @@ function gridOf(ws: ExcelJS.Worksheet): {
     const row = ws.getRow(r);
     const cells: string[] = [];
     const stored: string[] = [];
+    const named: string[] = [];
     const marks: boolean[] = [];
     for (let c = 1; c <= width; c++) {
       const cell = row.getCell(c);
       if (cell.isMerged && cell.master !== cell) {
-        cells.push(''); stored.push(''); marks.push(false);
+        cells.push(''); stored.push(''); named.push(''); marks.push(false);
         continue;
       }
       const value = flat(cell.value).trim();
-      const shown = value || headerName(cell);
+      const shown = value || cellToken(cell);
       cells.push(shown);
       stored.push(cell.formula ? '' : value);
+      // What this cell could be called, which is not the same as whether it
+      // holds anything. A totals row of bare SUM formulas occupies its cells
+      // and names none of them.
+      named.push(value || headerName(cell));
       marks.push(shown !== '' && looksLikeHeading(cell));
     }
     text.push(cells);
     values.push(stored);
+    names.push(named);
     styled.push(marks);
   }
-  return { text, values, styled };
+  return { text, values, names, styled };
 }
 
 export async function detectWorkbook(path: string): Promise<DetectedSheet[]> {
@@ -547,8 +616,8 @@ export async function detectWorkbook(path: string): Promise<DetectedSheet[]> {
 
   const wb = await openWorkbook(path);
   return wb.worksheets.map((ws) => {
-    const { text, values, styled } = gridOf(ws);
-    return { sheet: ws.name, tables: tablesOnSheet(text, ws.name, styled, values) };
+    const { text, values, names, styled } = gridOf(ws);
+    return { sheet: ws.name, tables: tablesOnSheet(text, ws.name, styled, values, names) };
   });
 }
 

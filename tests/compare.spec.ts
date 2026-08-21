@@ -2,9 +2,25 @@ import { test, expect } from '@playwright/test';
 import { verifySheet } from '../src/verify.js';
 import { formatReport, summarize } from '../src/report.js';
 import type { SheetSpec } from '../src/types.js';
-import { buildWorkbook, makeSharedFormulas } from './fixtures.js';
+import { buildWorkbook, makeSharedFormulas, DIR } from './fixtures.js';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import ExcelJS from 'exceljs';
 
 const SPEC: SheetSpec = { keyColumns: ['PolicyId'] };
+
+/** A one-row sheet under whatever headings a test needs. */
+async function headedWorkbook(name: string, headers: string[]): Promise<string> {
+  await mkdir(DIR, { recursive: true });
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Sheet1');
+  ws.addRow(headers);
+  ws.addRow(['US - Florida', 6642514.759, 9618538.628]);
+  const path = join(DIR, name);
+  await wb.xlsx.writeFile(path);
+  return path;
+}
+
 
 test.describe('the release-drift scenario', () => {
   test('an inserted column is a schema change, not data churn', async () => {
@@ -228,5 +244,35 @@ test.describe('report', () => {
     expect(text).toContain('P-1003 · Sum Insured');
     expect(text).not.toContain('CASCADED');
     expect(text.indexOf('FORMULA CHANGES')).toBeLessThan(text.indexOf('SCHEMA CHANGES'));
+  });
+
+  test('a numeric column heading that drifted is the same column, not two', async () => {
+    // From a real pro-forma report: columns headed by computed figures whose
+    // last digits move when the sheet recalculates. Compared as text those read
+    // as one column removed and another added, and every cell beneath them was
+    // then reported twice -- burying the real findings under hundreds of rows.
+    // A tolerance would have forgiven the same drift instantly had the number
+    // been a value rather than a name.
+    const golden = await headedWorkbook('numhead-golden.xlsx',
+      ['Region', '788321.400221', '33792307.66114401']);
+    const actual = await headedWorkbook('numhead-actual.xlsx',
+      ['Region', '788321.4002209998', '33792307.661144']);
+
+    const d = await verifySheet(golden, actual, { keyColumns: ['Region'] });
+    expect(d.schema.removed).toEqual([]);
+    expect(d.schema.added).toEqual([]);
+    // Region plus the two numeric headings: three columns, none of them added
+    // or removed.
+    expect(d.schema.compared).toHaveLength(3);
+    expect(d.ok).toBe(true);
+  });
+
+  test('headings that are genuinely different numbers stay different columns', async () => {
+    const golden = await headedWorkbook('numhead-diff-g.xlsx', ['Region', '1000', '2000']);
+    const actual = await headedWorkbook('numhead-diff-a.xlsx', ['Region', '1000', '3000']);
+
+    const d = await verifySheet(golden, actual, { keyColumns: ['Region'] });
+    expect(d.schema.removed).toEqual(['2000']);
+    expect(d.schema.added).toEqual(['3000']);
   });
 });

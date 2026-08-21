@@ -125,9 +125,36 @@ export function resolveSpec(spec: SheetSpec): ResolvedSpec {
   };
 }
 
-/** Canonical form used to match header names across releases. */
+/**
+ * A header that is a number, as a name.
+ *
+ * Reports head columns with computed figures -- a loss threshold, a return
+ * period, a currency rate -- and those recalculate. Two files then hold the
+ * same column under names that differ only in the last digits:
+ * `788321.400221` against `788321.4002209998`, a gap of 1.16e-10.
+ *
+ * Compared as text those are two different columns, so layer 1 reports one
+ * removed and one added and every cell beneath them is reported twice, with
+ * the real findings buried among hundreds of rows of noise. The irony is that
+ * a tolerance would have forgiven the same drift instantly had the number been
+ * a *value* rather than a *name*.
+ *
+ * Twelve significant figures because Excel keeps about fifteen and drift shows
+ * up past twelve. Two genuinely different headers agreeing to twelve figures
+ * would be merged, which is possible and has never been seen: column headings
+ * are not distinguished by their thirteenth digit.
+ */
+const NUMERIC_NAME = /^-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?$/;
+const HEADER_FIGURES = 12;
+
 export function canonHeader(name: string, loose: boolean): string {
   const t = name.trim();
+  // Only under `looseHeaders`, which is what asks for representation to be
+  // forgiven. Turning it off still means matching exactly what is written.
+  if (loose && NUMERIC_NAME.test(t)) {
+    const n = Number(t);
+    if (Number.isFinite(n)) return n.toPrecision(HEADER_FIGURES);
+  }
   return loose ? t.toLowerCase().replace(/\s+/g, ' ') : t;
 }
 

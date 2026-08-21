@@ -133,9 +133,38 @@ test.describe('detection: which row is the header', () => {
     expect(detected.keyColumns).not.toContain('Ref');
   });
 
-  test('falls back to the widest row when nothing reads as a header', async () => {
-    // A wrong header row still beats refusing to compare the block, and the
-    // names it produces are visible in the report.
+  test('a totals row of uncomputed formulas is not a row of twenty-five names', async () => {
+    // The header row is row 1. Row 2 totals it with formulas the generator
+    // never computed -- which is every formula in these reports. Those used to
+    // contribute their own text as a name, so row 2 looked like three names
+    // against row 1's three, won the search on paint, and the columns ended up
+    // called SUM(B3:B4). That name carries row numbers, so inserting a row
+    // renames every column and the whole table reports as columns added and
+    // removed.
+    await mkdir(DIR, { recursive: true });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Loss');
+    ws.addRow(['Company', 'Single Limit', 'Aggregate Limit']);
+    ws.getRow(1).font = { bold: true };
+    ws.addRow(['Total', { formula: 'SUM(B3:B4)' }, { formula: 'SUM(C3:C4)' }]);
+    ws.getRow(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDDDDDD' } };
+    ws.addRow(['Farmers', 100, 200]);
+    ws.addRow(['Hartford', 300, 400]);
+
+    const path = join(DIR, 'quirk-formula-totals.xlsx');
+    await wb.xlsx.writeFile(path);
+    const [table] = await headersOf(path);
+
+    expect(table!.row).toBe(1);
+    expect(table!.headers).toEqual(['Company', 'Single Limit', 'Aggregate Limit']);
+  });
+
+  test('a block of nothing but numbers has no header row, and keeps every row', async () => {
+    // This used to take row 1 as the header on the grounds that a wrong header
+    // beats refusing to compare. It does -- but naming the columns 1, 2, 3
+    // costs the first row of data and gives names that move the moment a
+    // figure changes, which is how a whole table came to be reported as
+    // columns added and removed. Positional names cost neither.
     const path = await sheet('quirk-allnumeric.xlsx', [
       [1, 2, 3],
       [4, 5, 6],
@@ -144,7 +173,8 @@ test.describe('detection: which row is the header', () => {
 
     const [table] = await headersOf(path);
 
-    expect(table!.row).toBe(1);
+    expect(table!.row).toBe(0);
+    expect(table!.headers).toEqual(['Column A', 'Column B', 'Column C']);
   });
 });
 

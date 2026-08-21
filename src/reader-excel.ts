@@ -67,7 +67,30 @@ export function headerName(cell: ExcelJS.Cell): string {
 
   const formula = (cell.formula as string | undefined) || '';
   if (!formula) return '';
-  return (FIRST_LITERAL.exec(formula)?.[1] ?? formula).trim();
+  // The leading literal, or nothing. Falling back to the formula itself used to
+  // seem harmless -- "stable if ugly" -- and is the opposite of stable: it
+  // names the column `SUM(B15:B18)`, which moves the moment a row is inserted
+  // above it, so both files report the column as one removed and one added.
+  // Worse, it makes a row of totals look like a row of twenty-five names, so
+  // the header search prefers it to the real header row above.
+  //
+  // A formula that builds header text contains that text. One that computes a
+  // number does not, and has no name to give.
+  return (FIRST_LITERAL.exec(formula)?.[1] ?? '').trim();
+}
+
+/**
+ * What a cell contributes to detection's picture of which cells are occupied.
+ *
+ * Distinct from `headerName` because the two answer different questions. A
+ * formula with no literal has no *name*, but it is not an empty cell: a row of
+ * nothing but formulas reading as blank splits the block it sits in and strands
+ * the real header row above the split.
+ */
+export function cellToken(cell: ExcelJS.Cell): string {
+  const rendered = String(scalar(cell.value) ?? '').trim();
+  if (rendered) return rendered;
+  return ((cell.formula as string | undefined) || '').trim();
 }
 
 /** Whether a column holds anything at all between two rows. */
