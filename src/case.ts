@@ -1,4 +1,4 @@
-import { copyFile, mkdir, writeFile, access, rm } from 'node:fs/promises';
+import { copyFile, mkdir, writeFile, access, rm, stat } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import type { WorkbookDiffResult, WorkbookSpec } from './types.js';
@@ -233,6 +233,22 @@ export async function runCase(
     })
     : null;
 
+  // Stamped as read, so a report can be told apart from a stale one describing
+  // the same two paths. Best effort: a stamp that cannot be taken is left out
+  // rather than failing a comparison that has already been made.
+  const stampOf = async (f: string) => {
+    try {
+      const st = await stat(f);
+      return { bytes: st.size, modified: st.mtime.toISOString().slice(0, 19).replace('T', ' ') };
+    } catch {
+      return undefined;
+    }
+  };
+  const inputs = {
+    golden: await stampOf(files.golden),
+    actual: await stampOf(files.actual),
+  };
+
   // A name may point into a subfolder -- the CLI keeps its output under
   // results/ so it cannot be mistaken for one of the two inputs.
   const parents = new Set(
@@ -243,7 +259,7 @@ export async function runCase(
   await Promise.all([
     // Written even when nothing differed: "identical, and here is what was
     // checked to say so" is the result, not the absence of one.
-    writeFile(files.report, formatMarkdownReport(diff, swept, { name, ...options }), 'utf8'),
+    writeFile(files.report, formatMarkdownReport(diff, swept, { name, ...options, inputs }), 'utf8'),
     writeFile(files.diffJson, JSON.stringify(diff, null, 2), 'utf8'),
     writeLedger(
       files.differences,

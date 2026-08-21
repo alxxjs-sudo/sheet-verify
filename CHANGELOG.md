@@ -4,6 +4,51 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.8.0 — 2026-08-20
+
+### `clean` said it removed folders it had not removed
+
+Reported from a real tree, with the output to prove it:
+
+    removed  output_comparison/pro-forma/case_001/results
+    [Error: EPERM: operation not permitted, rmdir '.../case_001/results']
+
+It printed the line *before* attempting the delete, so a folder Windows refused
+to release was announced as gone. The throw then took the whole script with it,
+leaving every later folder untouched and unmentioned. A clean that says it
+cleared the tree and cleared part of it is worse than one that fails outright,
+because the run afterwards looks trustworthy -- which is how stale results came
+to be mistaken for a cache.
+
+Three changes:
+
+- **Delete first, report second.** Only what actually went is called removed.
+- **Retry.** The failure is usually transient: Windows marks a file
+  delete-pending until the last handle closes, so the contents go and the
+  `rmdir` behind them fails -- which is the exact shape of the error above.
+  Eight attempts, 150ms apart.
+- **Carry on, then fail loudly.** One locked folder costs that folder, not the
+  rest. What could not be removed is listed with its error code, the likely
+  causes are named, and the exit code is 1.
+
+### `report.md` says which files it read
+
+Not a cache, though it looked like one: swap the pair in a case folder, fail to
+clear the old results, and the report still names the same two paths, so a stale
+report is indistinguishable from a fresh one. Nothing in this tool reads its own
+results -- a run only writes to that folder -- but there was no way to tell that
+from the outside. The header now carries the stamp:
+
+    | golden | ...\golden.xlsx — 22 sheet(s) — 181,914 bytes, modified 2026-08-17 11:20:01 |
+
+Swap a pair and the size and time move. If they do not, the report is describing
+the old files.
+
+### `npm run bare`
+
+`--bare` had no script, so the one command for a report accidentally saved in
+Excel was the one that had to be typed out in full.
+
 ## 1.7.1 — 2026-08-20
 
 ### "33 sheets failing" on a report with 22 sheets

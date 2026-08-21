@@ -13,6 +13,22 @@ export interface ReportOptions {
    * top of the report rather than in the command someone ran last week.
    */
   recalculated?: boolean;
+  /**
+   * Size and modified time of each input, as read.
+   *
+   * The path alone does not say *which* file was there. Swap the pair in a case
+   * folder, fail to clear the old results, and the report still names the same
+   * two paths -- so a stale report is indistinguishable from a fresh one, and
+   * the natural conclusion is that the tool cached something. It does not: a
+   * run only ever writes to the results folder. This is how to tell.
+   */
+  inputs?: { golden?: FileStamp; actual?: FileStamp };
+}
+
+/** Enough to tell two versions of the same path apart. */
+export interface FileStamp {
+  bytes: number;
+  modified: string;
 }
 
 /**

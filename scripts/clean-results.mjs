@@ -86,12 +86,58 @@ if (!found.length) {
   process.exit(0);
 }
 
+/**
+ * Delete first, report second, and never stop at the first refusal.
+ *
+ * This printed "removed" *before* attempting the delete, so a folder Windows
+ * refused to release was reported as gone. Worse, the throw took the whole
+ * script with it, leaving every later folder untouched and unmentioned -- a
+ * clean that says it cleared the tree and cleared half of it is worse than one
+ * that fails outright, because the run afterwards looks trustworthy.
+ *
+ * Files here get locked in ordinary use: Excel holds a workbook the moment it
+ * is open, and OneDrive holds one while it syncs.
+ */
+const failures = [];
+let removed = 0;
+
 for (const p of found) {
-  console.log(`${dry ? 'would remove' : 'removed'}  ${relative(process.cwd(), p)}`);
-  if (!dry) await rm(p, { recursive: true, force: true });
+  const shown = relative(process.cwd(), p);
+  if (dry) {
+    console.log(`would remove  ${shown}`);
+    removed++;
+    continue;
+  }
+  try {
+    // Retry, because the usual failure here is transient. Windows marks a file
+    // delete-pending until the last handle closes, so the files inside go and
+    // the rmdir that follows fails with EPERM -- which is exactly the shape of
+    // the error reported from a real tree. Node retries EBUSY, EMFILE, ENFILE,
+    // ENOTEMPTY and EPERM, which is the whole set that matters here.
+    await rm(p, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
+    console.log(`removed  ${shown}`);
+    removed++;
+  } catch (e) {
+    // Keep going. One locked folder should cost that folder, not the rest.
+    failures.push({ shown, why: e.code ?? e.message });
+  }
 }
 
 console.log(
-  `\n${found.length} item(s)${dry ? ' would be removed' : ' removed'}` +
+  `\n${removed} item(s)${dry ? ' would be removed' : ' removed'}` +
   `${dry ? ' — re-run without --dry to do it' : ''}`,
 );
+
+if (failures.length) {
+  console.error(`\n${failures.length} item(s) could NOT be removed:`);
+  for (const f of failures) console.error(`  ${f.shown}  (${f.why})`);
+  console.error(
+    'Something is holding them open. Close any workbook from these folders in'
+    + ' Excel, and if the tree is inside OneDrive, pause syncing or move the tree'
+    + ' out of it: OneDrive keeps a handle while it uploads, and can restore what'
+    + ' you delete.'
+    + '\n\nThese folders still hold the PREVIOUS run. Delete them before trusting'
+    + ' what the next run reports.',
+  );
+  process.exit(1);
+}

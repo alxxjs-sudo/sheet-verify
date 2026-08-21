@@ -29,6 +29,12 @@ export interface MarkdownOptions {
   /** Separator used in composite keys, replaced with " / " for display. */
   keySeparator?: string;
   /**
+   * Size and modified time of each input, as read. The path alone does not say
+   * *which* file was there: swap a pair in a case folder, fail to clear the old
+   * results, and the report still names the same two paths.
+   */
+  inputs?: { golden?: { bytes: number; modified: string }; actual?: { bytes: number; modified: string } };
+  /**
    * Both files were opened and saved by Excel before comparison, so the
    * formulas carry results. Said out loud in the report: it changes what the
    * numbers below mean, and a reader must never have to infer the basis of a
@@ -525,9 +531,14 @@ export function formatMarkdownReport(
     );
   }
 
+  // The stamp answers "is this report about the files that are there now?",
+  // which the path alone cannot: swapping a pair leaves both paths unchanged.
+  const stamp = (f?: { bytes: number; modified: string }) =>
+    f ? ` — ${f.bytes.toLocaleString('en-GB')} bytes, modified ${f.modified}` : '';
+
   out.push(...table(['', ''], [
-    ['golden', `${code(diff.base.source)} — ${diff.base.sheets.length} sheet(s)`],
-    ['report', `${code(diff.next.source)} — ${diff.next.sheets.length} sheet(s)`],
+    ['golden', `${code(diff.base.source)} — ${diff.base.sheets.length} sheet(s)${stamp(options.inputs?.golden)}`],
+    ['report', `${code(diff.next.source)} — ${diff.next.sheets.length} sheet(s)${stamp(options.inputs?.actual)}`],
     ['tables compared', `${compared.length}${positional.length ? `, ${positional.length} by row position` : ''}`],
     ...(skipped.length ? [['tables not compared', String(skipped.length)]] : []),
   ]));

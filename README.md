@@ -372,6 +372,7 @@ Every script, and what it does:
 | `summary` | rebuild `!summary/` from results already on disk, comparing nothing |
 | `spec -- <case>` | print what detection made of the files, and stop |
 | `bless -- <case>` | accept the new report as the golden output |
+| `bare -- <case>` | strip calculated results a save in Excel wrote in, in place |
 | | |
 | `write:meta -- <type>` | generate a starting `meta.json` from the pairs |
 | `write:expect -- <case>` | record what a run verified, as a guard against losing it |
