@@ -56,10 +56,10 @@ const FIRST_LITERAL = /"([^"]+)"/;
  * goes uncompared. On one sheet that was six columns of six thousand cells
  * each.
  *
- * The formula is the same on both sides, so it identifies the column just as
- * well as its rendered text would. The leading literal is used where there is
- * one because it is what the header actually says; failing that the formula
- * itself, which is stable if ugly. Repeats are disambiguated downstream.
+ * The formula is the same on both sides, so its leading literal identifies the
+ * column just as well as the rendered text would -- and it is what the header
+ * actually says. A formula with no literal gives no name at all; see the note
+ * on the fallback below for why. Repeats are disambiguated downstream.
  */
 export function headerName(cell: ExcelJS.Cell): string {
   const rendered = String(scalar(cell.value) ?? '').trim();

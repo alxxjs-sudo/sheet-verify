@@ -352,7 +352,7 @@ positional](#notes-and-limits).
 
 ```bash
 npm install         # builds dist/ on the way out, via the prepare script
-npm run check       # typecheck + doc links + 285 Playwright tests
+npm run check       # typecheck + doc links + the Playwright suite
 ```
 
 `check` is the gate: run it before pushing and it says yes or no once.

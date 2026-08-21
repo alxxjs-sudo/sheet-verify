@@ -4,6 +4,19 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.9.1 — 2026-08-20
+
+### Two pieces of documentation that had stopped being true
+
+`headerName` still described the fallback it no longer has -- "failing that the
+formula itself, which is stable if ugly" -- directly above the code that removed
+it, and directly above the comment explaining why. A doc comment describing
+behaviour that was taken out is worse than none: it is the version somebody
+believes.
+
+And the README pinned a test count, which is a number that goes stale on every
+release and tells a reader nothing they need. `npm run check` reports it.
+
 ## 1.9.0 — 2026-08-20
 
 ### A totals row of formulas is not a row of column names
