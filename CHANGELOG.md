@@ -4,6 +4,63 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.10.0 — 2026-08-23
+
+### A summary for each report type, not only for the whole run
+
+`!summary/` now holds a `.md` and `.xlsx` per report type beside the run-wide
+pair, named after the type's `reportType`. The run summary answers "how did the
+run go"; a type's own file answers the question asked next, and the one that
+actually gets forwarded: how did *my* report type go, without the ten types the
+reader does not work on. It carries the same case table with the totals spelled
+out rather than left to be added up.
+
+A type with no `meta.json`, or one that never set `reportType`, was grouped
+under its folder path. It is now **Unspecified report type**, with the folder
+path kept inside the name so two unnamed types stay two groups and two files.
+That is a visible change to the headings in `run-summary.md` for any tree that
+never named its types.
+
+Each type's file is rewritten only by a run that covered that type, so a
+narrowed run leaves the others describing their own last run. A run over the
+whole tree also clears summaries for types that no longer exist — a renamed type
+otherwise leaves a file reading exactly as current as the ones beside it.
+
+### A failing case says which tables failed
+
+The log gave a count and a path: `18 tables failing`, then `report.md`. Between
+them sat the question everyone asked next, and a colleague reading only the
+terminal concluded the tool had missed differences it had caught and written
+down. A failing case now prints its worst five tables with the kind of
+difference beside each — values, formulas, types, invariants, rows, columns.
+
+Columns of nothing but zeroes are dropped, so value differences stay two columns
+wide and only a report that changed shape widens it.
+
+### Logging, elsewhere
+
+- The report path in the log was absolute while every other path was relative;
+  it wrapped the line and buried the block it was meant to close.
+- A run says how long it took, which is the difference between waiting for a
+  plain run and waiting for `--recalc`.
+- A run that found differing cells nobody checked says so on its last line.
+  That total lived in each case's report, which is not read on a green run.
+- `--bare` counted files it rewrote and printed a line for each file it did not.
+  Over forty cases that was eighty lines saying nothing happened. Counted now.
+- `npm run summary` said how many cases it read and not how they stood.
+- A rebuilt summary printed **0 differing cells nobody checked** for every case.
+  `diff.json` holds layer 1 only, so a rebuild never had that number — and a
+  zero it did not measure is the exact failure this tool exists to prevent. It
+  now leaves the column empty and says why.
+- A report type folder holding no cases at all was passed over in silence. With
+  no cases it appears in no summary either, so a type nobody is checking looked
+  exactly like a type where everything passed. Named now, without failing the
+  run — a folder can be waiting for its first download.
+- `npm run clean` printed a line per folder; grouped by report type, with the
+  space each freed. `--dry` still lists every folder by name.
+- `npm run links` groups broken links under the file that holds them, since a
+  move between documents breaks several at once and reads as one edit.
+
 ## 1.9.1 — 2026-08-20
 
 ### Two pieces of documentation that had stopped being true

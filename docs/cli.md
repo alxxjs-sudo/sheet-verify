@@ -43,7 +43,16 @@ Cases are named by their path, since `case_001` will exist under every type:
 ✗ Global Standard Cat Report · case_002 · three columns inserted into Geocoding
     global_standard_cat_report/case_002
     1 table failing
+      table       values  cols +/-
+      ──────────  ──────  ────────
+      Geocoding      142       3/0
 ```
+
+A case that failed is broken down by table, worst first: which tables, and what
+kind of difference. A column of nothing but zeroes is left out, so a run of
+value differences stays two columns wide and only a report that changed shape
+widens it. Five tables are named and the rest are counted — the full list is in
+that case's `report.md`, whose path is the last line of the block.
 
 Targeting a subfolder runs only what is under it, but still applies the
 configuration above it — so `sheet-verify quarterly_report` gives the same verdicts for
@@ -130,6 +139,9 @@ Two keys change nothing about the comparison and a great deal about reading it.
 ✗ Validation Report · case_003 · an extra Cat Model Version row shifts the whole perils block down
     validation_report/case_003
     1 table failing
+      table    values  rows +/-
+      ───────  ──────  ────────
+      Perils        9       1/0
 ```
 
 The label also titles that case's `report.md`, with the folder name kept

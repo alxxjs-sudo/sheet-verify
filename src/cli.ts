@@ -3,14 +3,18 @@ import { mkdir,readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { runCase, type CaseOptions } from './case.js';
 import { recalculatePair } from './recalc.js';
-import { writeSummary, type CaseRecord, type CaseVerdict } from './summary.js';
+import {
+  writeSummary, UNSPECIFIED_TYPE, type CaseRecord, type CaseVerdict, type SummaryFiles,
+} from './summary.js';
 import { detectSpec } from './detect.js';
 import { summarizeSweep } from './sweep.js';
 import { makeBare, cachedValueState } from './bare.js';
 import { proposeMeta } from './propose.js';
 import { mergeSheetSpec } from './workbook.js';
 import type { LedgerScope } from './ledger.js';
-import type { WorkbookDiffResult, WorkbookSheetSpec, WorkbookSpec } from './types.js';
+import type {
+  DiffResult, WorkbookDiffResult, WorkbookSheetSpec, WorkbookSpec,
+} from './types.js';
 
 /**
  * Compares report folders. Put the golden output and the new report in a
@@ -418,6 +422,49 @@ async function findCases(
 const exists = (p: string) => stat(p).then(() => true, () => false);
 
 /**
+ * Folders that declare themselves a report type, at any depth.
+ *
+ * Used to catch one that holds no cases at all. A type whose downloads stopped
+ * arriving, or whose cases were moved, leaves a folder with a `meta.json` in
+ * it, contributes nothing to the run and appears in no summary -- which from
+ * the outside is indistinguishable from a type where everything passed.
+ */
+async function reportTypeFolders(
+  root: string,
+  dir: string,
+  cases: Case[],
+  into: string[] = [],
+): Promise<string[]> {
+  // A case is a leaf. Nothing inside one is a report type.
+  if (cases.some((c) => c.dir === dir)) return into;
+
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return into;
+  }
+
+  if (dir !== root) {
+    // An unreadable meta.json is reported by the run that reads it properly.
+    // The folder still counts here, so a type with a broken config is not also
+    // an invisible one.
+    const spec = await readJson(join(dir, 'meta.json'))
+      .catch(() => ({ reportType: '?' }) as WorkbookSpec);
+    if (spec?.reportType) into.push(dir);
+  }
+
+  for (const e of entries) {
+    if (
+      e.isDirectory() && e.name !== RESULT_DIR && e.name !== resultDir && e.name !== SUMMARY_DIR
+    ) {
+      await reportTypeFolders(root, join(dir, e.name), cases, into);
+    }
+  }
+  return into;
+}
+
+/**
  * The root of the comparison tree, which is not necessarily the folder asked
  * for: running one report type must apply the same configuration, and produce
  * the same case names, as running everything. So the root is the outermost
@@ -696,6 +743,24 @@ function selects(layers: ConfigLayer[], dir: string): boolean {
 }
 
 /**
+ * What kind of report a case belongs to, for the summaries.
+ *
+ * `reportType` is written once in the type folder's `meta.json` and inherited
+ * by every case below it. Without one the folder path stands in, inside a name
+ * that says plainly that nobody set it -- so it reads as a gap to fill rather
+ * than as a report type somebody chose, and two unnamed folders stay two
+ * groups instead of merging into one heading and one file.
+ */
+function reportTypeOf(spec: WorkbookSpec, root: string, caseDir: string): string {
+  const named = spec.reportType?.trim();
+  if (named) return named;
+  // Empty for a case sitting at the root of the tree, which has no folder
+  // above it to name and needs no parenthetical saying so.
+  const folder = DISPLAY(relative(root, dirname(caseDir)));
+  return folder ? `${UNSPECIFIED_TYPE} (${folder})` : UNSPECIFIED_TYPE;
+}
+
+/**
  * How a case announces itself in the log: what kind of report it is, which
  * case, and what that case is for. The path moves to the line below, because
  * it is how the folder is found rather than what the run is about.
@@ -722,7 +787,132 @@ function headline(
   };
 }
 
+/**
+ * The failure, broken down by table.
+ *
+ * The one-line summary says how much failed and the report says everything;
+ * between them sat the question people actually ask next -- *which* tables, and
+ * what kind of difference. Without it the answer was "open report.md", and a
+ * colleague reading only the terminal concluded the tool had not caught
+ * differences it had caught and listed.
+ *
+ * Kept small on purpose. A run of forty cases must stay readable, so only the
+ * worst few tables are named and the rest are counted.
+ */
+const BREAKDOWN_ROWS = 5;
+const BREAKDOWN_NAME = 34;
+
+interface Measure {
+  head: string;
+  cell(d: DiffResult): string;
+  found(d: DiffResult): number;
+}
+
+const MEASURES: Measure[] = [
+  { head: 'values', cell: (d) => count(d.values.length), found: (d) => d.values.length },
+  { head: 'formulas', cell: (d) => count(d.formulas.length), found: (d) => d.formulas.length },
+  { head: 'types', cell: (d) => count(d.types.length), found: (d) => d.types.length },
+  {
+    head: 'invariants',
+    cell: (d) => count(d.invariants.length),
+    found: (d) => d.invariants.length,
+  },
+  {
+    head: 'rows +/-',
+    cell: (d) => `${d.rows.added.length}/${d.rows.removed.length}`,
+    found: (d) => d.rows.added.length + d.rows.removed.length,
+  },
+  {
+    head: 'cols +/-',
+    cell: (d) => `${d.schema.added.length}/${d.schema.removed.length}`,
+    found: (d) => d.schema.added.length + d.schema.removed.length,
+  },
+];
+
+const count = (v: number): string => v.toLocaleString('en-US');
+
+/** Longest first, so the five that are named are the five worth naming. */
+const weight = (d: DiffResult): number =>
+  MEASURES.reduce((total, m) => total + m.found(d), 0);
+
+function breakdown(diff: WorkbookDiffResult): string[] {
+  const failing = diff.sheets
+    .filter((o) => o.status === 'compared' && o.diff && !o.diff.ok)
+    .sort((a, b) => weight(b.diff!) - weight(a.diff!) || a.label.localeCompare(b.label));
+  if (!failing.length) return [];
+
+  // A column of nothing but zeroes is noise, and judged against the tables
+  // actually printed rather than against all of them -- deciding from the whole
+  // set puts up a `cols +/-` column reading 0/0 five times because a table
+  // nobody can see has one. Sorting by weight is what makes that safe: a
+  // category with real numbers in it lifts its table into these five.
+  const worst = failing.slice(0, BREAKDOWN_ROWS);
+  const shown = MEASURES.filter((m) => worst.some((o) => m.found(o.diff!) > 0));
+  if (!shown.length) return [];
+
+  const head = ['table', ...shown.map((m) => m.head)];
+  const rows = worst.map((o) => [
+    o.label.length > BREAKDOWN_NAME ? `${o.label.slice(0, BREAKDOWN_NAME - 1)}…` : o.label,
+    ...shown.map((m) => m.cell(o.diff!)),
+  ]);
+
+  const width = head.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]!.length)));
+  // The name reads left to right; every count is a number and lines up on the
+  // right, which is the only way a column of them can be compared by eye.
+  const line = (cells: string[]) =>
+    cells.map((c, i) => (i ? c.padStart(width[i]!) : c.padEnd(width[i]!))).join('  ').trimEnd();
+
+  const out = [line(head), width.map((w) => '─'.repeat(w)).join('  ')];
+  for (const r of rows) out.push(line(r));
+  if (failing.length > rows.length) {
+    out.push(`… and ${failing.length - rows.length} more table(s)`);
+  }
+  return out;
+}
+
+/**
+ * Where a run's summaries go: `!summary/` at the tree root, and a subfolder of
+ * it for a run given `--results <name>`, so a plain run and a `--recalc` run
+ * keep their summaries instead of one overwriting the other. The default run
+ * owns the top of the folder, which is the common path.
+ */
+const summaryDir = (root: string): string =>
+  resultDir === RESULT_DIR ? join(root, SUMMARY_DIR) : join(root, SUMMARY_DIR, resultDir);
+
+/** Fits a list onto one line, saying how many did not fit rather than cutting. */
+function oneLine(items: string[], width = 96): string {
+  const out: string[] = [];
+  let used = 0;
+  for (const item of items) {
+    if (out.length && used + item.length + 2 > width) {
+      return `${out.join(', ')} … and ${items.length - out.length} more`;
+    }
+    out.push(item);
+    used += item.length + 2;
+  }
+  return out.join(', ');
+}
+
+function printTypeSummaries(written: SummaryFiles): void {
+  if (!written.types.length) return;
+  const n = written.types.length;
+  console.log(
+    `  ${n} report type summar${n === 1 ? 'y' : 'ies'} beside it — ` +
+    // `x12`, not `(12)` -- a type with no name of its own already ends in a
+    // parenthetical, and two in a row read as one broken one.
+    oneLine(written.types.map((t) => `${t.type} ×${t.cases}`)),
+  );
+}
+
+/** Wall clock, in the units a person waits in. */
+function elapsed(ms: number): string {
+  const secs = Math.round(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  return `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, '0')}s`;
+}
+
 async function main(): Promise<number> {
+  const started = Date.now();
   const args = parseArgs(process.argv.slice(2));
   resultDir = args.results;
   if (args.help) {
@@ -790,13 +980,17 @@ async function main(): Promise<number> {
 
   if (args.bare) {
     let touched = 0;
+    let untouched = 0;
     for (const c of found) {
       for (const file of [c.golden, c.actual]) {
         const label = `${c.name}/${basename(file)}`;
         try {
           const result = await makeBare(file);
           if (!result) {
-            console.log(`  ${label}  already bare`);
+            // Counted, not printed. Running this twice over a tree of forty
+            // cases put eighty lines on the screen saying nothing happened,
+            // and buried the handful that said something did.
+            untouched++;
             continue;
           }
           touched++;
@@ -810,7 +1004,11 @@ async function main(): Promise<number> {
         }
       }
     }
-    console.log(`\n${touched} file(s) rewritten. Excel regenerates the results on open.`);
+    console.log(
+      `\n${touched} file(s) rewritten` +
+      (untouched ? `, ${untouched} already bare` : '') +
+      '. Excel regenerates the results on open.',
+    );
     return 0;
   }
 
@@ -834,7 +1032,7 @@ async function main(): Promise<number> {
       // nothing and cost the speed that makes this worth having.
       const layers = await configLayers(root, c.dir);
       const spec = layers.reduce((acc, l) => mergeSpecs(acc, l.spec), {} as WorkbookSpec);
-      const type = spec.reportType ?? DISPLAY(relative(root, dirname(c.dir))) ?? '(untyped)';
+      const type = reportTypeOf(spec, root, c.dir);
       const label = layers.find((l) => basename(l.path) === 'case.json')?.spec.label;
       // Read plainly, not through readJson: that one validates a *config* and
       // rejects unknown keys, so every diff.json threw and every case looked
@@ -867,18 +1065,22 @@ async function main(): Promise<number> {
       console.error(`sheet-verify: no cases under ${root}`);
       return 1;
     }
-    const into = resultDir === RESULT_DIR
-      ? join(root, SUMMARY_DIR)
-      : join(root, SUMMARY_DIR, resultDir);
-    await mkdir(into, { recursive: true });
-    const { markdown } = await writeSummary(join(into, 'run-summary'), records, new Date(), {
-      rebuilt: true,
-    });
+    const written = await writeSummary(summaryDir(root), records, new Date(), { rebuilt: true });
+
     const missing = records.filter((r) => r.verdict === 'could not run').length;
+    const bad = records.filter((r) => r.verdict === 'failed').length;
+    // What the file says, said here too. A rebuild that reports only how many
+    // cases it read makes the reader open the file to learn whether the tree
+    // is green, which is the one thing a summary line should already answer.
     console.log(
-      `${DISPLAY(relative(process.cwd(), markdown))} — ${records.length} case(s)` +
-      (missing ? `, ${missing} with no results on disk` : ''),
+      `${DISPLAY(relative(process.cwd(), written.markdown))} — ${records.length} case(s): ` +
+      [
+        `${records.filter((r) => r.verdict === 'passed').length} passed`,
+        `${bad} failing`,
+        ...(missing ? [`${missing} with no results on disk`] : []),
+      ].join(', '),
     );
+    printTypeSummaries(written);
     return 0;
   }
 
@@ -997,7 +1199,7 @@ async function main(): Promise<number> {
 `);
         failed++;
         records.push({
-          reportType: spec.reportType ?? DISPLAY(relative(root, dirname(c.dir))) ?? '(untyped)',
+          reportType: reportTypeOf(spec, root, c.dir),
           name: c.name, label, verdict: 'could not run', summary: (e as Error).message,
         });
         continue;
@@ -1017,6 +1219,11 @@ async function main(): Promise<number> {
       lines.push(result.blessed && blessTo
         ? `golden replaced by ${basename(c.actual)}, and ${basename(c.golden)} removed`
         : result.summary);
+      // Indented under the summary it expands, so the block reads as belonging
+      // to the case rather than as more lines about it.
+      if (result.diff && !result.blessed) {
+        for (const row of breakdown(result.diff)) lines.push(`  ${row}`);
+      }
       if (recalculated) lines.push('recalculated by Excel before comparing');
       if (skew) lines.push(`! ${skew}`);
       // Layer 2 does not decide the outcome, but a case that passed while
@@ -1026,7 +1233,11 @@ async function main(): Promise<number> {
       if (gaps) lines.push(`! ${summarizeSweep(result.sweep!)}`);
       // The report is where the detail is, so its path goes last: either the
       // run found something, or it found something nobody had asked about.
-      if (!result.blessed && (!result.ok || gaps)) lines.push(result.files.report);
+      // Relative, like every other path in this log -- an absolute one here
+      // wrapped the line and buried the block it was meant to close.
+      if (!result.blessed && (!result.ok || gaps)) {
+        lines.push(DISPLAY(relative(process.cwd(), result.files.report)));
+      }
 
       // Recorded from the run rather than from the config, so it says what was
       // verified and not what somebody hoped would be. Deliberately its own
@@ -1044,7 +1255,7 @@ async function main(): Promise<number> {
       const compared = result.diff?.sheets.filter((o) => o.status === 'compared') ?? [];
       const verdict: CaseVerdict = result.blessed ? 'blessed' : result.ok ? 'passed' : 'failed';
       records.push({
-        reportType: spec.reportType ?? DISPLAY(relative(root, dirname(c.dir))) ?? '(untyped)',
+        reportType: reportTypeOf(spec, root, c.dir),
         name: c.name,
         label,
         verdict,
@@ -1062,7 +1273,7 @@ async function main(): Promise<number> {
       if (path) console.log(`    ${path}`);
       console.error(`    ${(e as Error).message}`);
       records.push({
-        reportType: spec.reportType ?? DISPLAY(relative(root, dirname(c.dir))) ?? '(untyped)',
+        reportType: reportTypeOf(spec, root, c.dir),
         name: c.name, label, verdict: 'could not run', summary: (e as Error).message,
       });
     }
@@ -1084,16 +1295,13 @@ async function main(): Promise<number> {
     // A named results folder gets a subfolder of its own, so a plain run and a
     // --recalc run keep their summaries instead of one overwriting the other.
     // The default run owns the top of _summary/, which is the common path.
-    const into = resultDir === RESULT_DIR
-      ? join(root, SUMMARY_DIR)
-      : join(root, SUMMARY_DIR, resultDir);
-    await mkdir(into, { recursive: true });
     const scoped = DISPLAY(relative(root, target));
-    const { markdown } = await writeSummary(join(into, 'run-summary'), records, new Date(), {
+    const written = await writeSummary(summaryDir(root), records, new Date(), {
       target: scoped && scoped !== '.' ? scoped : undefined,
     });
     console.log(`
-${DISPLAY(relative(process.cwd(), markdown))} — and the .xlsx beside it`);
+${DISPLAY(relative(process.cwd(), written.markdown))} — and the .xlsx beside it`);
+    printTypeSummaries(written);
   }
 
   // Folders that were meant to be cases and could not be run. Counted as
@@ -1103,12 +1311,46 @@ ${DISPLAY(relative(process.cwd(), markdown))} — and the .xlsx beside it`);
     console.error(broken.join('\n'));
   }
 
+  // A report type folder with nothing under it. Measured against every case
+  // found rather than every case run, so a type whose cases were merely left
+  // out by a "cases" list is counted there and not accused of being empty.
+  //
+  // Not a failure: a folder can legitimately be waiting for its first
+  // download. But it must not be silent -- with no cases it appears in no
+  // summary at all, and a type nobody is checking looks exactly like a type
+  // where everything passed.
+  const idle = (await reportTypeFolders(root, target, everything))
+    .filter((d) => !everything.some((c) => c.dir === d || c.dir.startsWith(d + sep)));
+  if (idle.length) {
+    console.log(
+      `\n${idle.length} report type folder(s) held no cases:\n  ` +
+      idle.map((d) => DISPLAY(relative(root, d))).join('\n  '),
+    );
+  }
+
   const n = found.length;
   console.log(
     `\n${n} case${n === 1 ? '' : 's'}, ${failed} failing`
     + (broken.length ? `, ${broken.length} could not be run` : '')
-    + (setAside ? ` — ${setAside} not selected by "cases"` : ''),
+    + (setAside ? ` — ${setAside} not selected by "cases"` : '')
+    // How long it took, because a run with --recalc is half an hour and a
+    // plain one is a minute, and knowing which you just did is the difference
+    // between waiting and going to look at something else.
+    + ` (${elapsed(Date.now() - started)})`,
   );
+
+  // The quiet number, said last so it is the one left on the screen. A run can
+  // report zero failures while cells nobody keyed moved underneath it, and
+  // that total lives in each case's report where a green run is never read.
+  const unchecked = records.reduce((total, r) => total + (r.uncheckedDiffering ?? 0), 0);
+  if (unchecked) {
+    const cases = records.filter((r) => (r.uncheckedDiffering ?? 0) > 0).length;
+    console.log(
+      `${count(unchecked)} differing cell(s) nobody checked, across ${cases} case(s)` +
+      ' — a table with no row key was not compared.',
+    );
+  }
+
   return failed || broken.length ? 1 : 0;
 }
 

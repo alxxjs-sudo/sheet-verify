@@ -167,8 +167,12 @@ A run covering more than one case also writes, at the root of what was run:
 
 ```
 output_comparison/!summary/
-  run-summary.md      how the run went — for reading and pasting into a message
-  run-summary.xlsx    the same, for sorting and filtering
+  run-summary.md          how the run went — for reading and pasting into a message
+  run-summary.xlsx        the same, for sorting and filtering
+  Pro Forma.md            one report type, on its own — same two forms
+  Pro Forma.xlsx
+  Facility Report.md
+  Facility Report.xlsx
 ```
 
 The name starts with `!` so the folder sorts to the top of the tree, above every
@@ -179,6 +183,24 @@ sorted to the bottom.
 
 A run given `--results <name>` puts its summary in `!summary/<name>/`, so a
 plain run and a `--recalc` run keep both instead of one overwriting the other.
+
+### One file per report type
+
+Beside the run summary, each report type gets the same pair to itself, named
+after the type. The whole-run view answers *how did the run go*; this answers the
+question asked next, and the one that actually gets sent on: **how did my report
+type go** — without the ten types the reader does not work on.
+
+The name comes from `reportType` in that type's `meta.json`, so it is written
+once beside the cases it names. A folder with no `meta.json`, or one that never
+set the key, is called **Unspecified report type**, with its folder path kept in
+the name so two unnamed types stay two files rather than overwriting each other.
+
+Each file carries its own timestamp, and is only rewritten by a run that covered
+that type — so a run narrowed to one type leaves the others describing their own
+last run rather than being invalidated by it. A run that covered the *whole*
+tree also clears summaries for types that no longer exist, since a renamed type
+would otherwise leave a file reading exactly as current as the ones beside it.
 
 ### Keeping it honest
 
@@ -205,6 +227,11 @@ is a minute, or half an hour with `--recalc`. It says so at the top, and a case
 with no results on disk is listed as **never run** rather than left out: a case
 missing from an overview is indistinguishable from a case that passed.
 
+One thing a rebuild cannot tell you: `diff.json` holds layer 1 only, so the
+**unchecked differing** count is not in it. A rebuilt summary leaves that column
+empty and says why, rather than printing a zero it did not measure. Each case's
+own `report.md` still has the number.
+
 Every other artefact describes one case, which is the right shape for fixing
 something and the wrong shape for the question asked first: **how did the run
 go?** That answer used to live only in terminal scrollback, where it is gone as
@@ -213,7 +240,8 @@ soon as anyone scrolls and cannot be sent to someone who was not watching.
 Both are grouped **by report type**, because that is the unit people work in — a
 release breaks a *kind* of report, and eight failures on one type with the rest
 clean is a different morning from one failure on each of eight types. A type
-that never named itself in a `meta.json` is grouped under its folder path.
+that never named itself in a `meta.json` is grouped under **Unspecified report
+type**, with its folder path kept so two unnamed types stay two groups.
 
 The markdown opens with a table of every type and its counts, then a section per
 type listing each case with its label and result, failures first. The workbook
@@ -227,8 +255,11 @@ that layer 1 never looked at, and it is the one number that can be non-zero on a
 case that *passed* — which is what a table with no row key looks like from the
 outside. The markdown calls it out under any type where it is non-zero.
 
-`npm run clean` removes the summary along with the `results/` folders, for the
-same reason: one left from the last run reads as current.
+A type's own file is the same table with the totals spelled out rather than left
+to be added up, and the same warning under it.
+
+`npm run clean` removes the summary folder along with the `results/` folders,
+for the same reason: one left from the last run reads as current.
 
 ## compared.xlsx
 

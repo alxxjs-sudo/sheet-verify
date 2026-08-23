@@ -56,8 +56,13 @@ for (const f of files) {
   );
 }
 
-const problems = [];
+// Kept by file rather than as one flat list. A move between documents breaks
+// several links at once, and grouped they read as the one edit they are
+// instead of as five unrelated faults.
+const problems = new Map();
+const note = (f, line) => problems.set(f, [...(problems.get(f) ?? []), line]);
 let checked = 0;
+let broken = 0;
 
 for (const f of files) {
   for (const m of bodies.get(f).matchAll(/\]\(([^)]+)\)/g)) {
@@ -71,7 +76,8 @@ for (const f of files) {
     if (path) {
       const resolved = normalize(join(dirname(join(ROOT, f)), path));
       if (!existsSync(resolved)) {
-        problems.push(`${f}  ->  ${target}\n    no such file`);
+        note(f, `${target}\n       no such file`);
+        broken++;
         continue;
       }
       key = relative(ROOT, resolved).split(sep).join('/');
@@ -80,14 +86,27 @@ for (const f of files) {
     // A link into a file that is not one of ours -- source, a config -- is
     // checked for existence only. There are no headings to look for.
     if (anchor && anchors.has(key) && !anchors.get(key).has(anchor)) {
-      problems.push(`${f}  ->  ${target}\n    no heading "${anchor}" in ${key}`);
+      note(f, `${target}\n       no heading "${anchor}" in ${key}`);
+      broken++;
     }
   }
 }
 
-if (problems.length) {
-  console.error(`\n${problems.join('\n')}\n`);
-  console.error(`${checked} internal link(s), ${problems.length} broken`);
+const headings = [...anchors.values()].reduce((total, set) => total + set.size, 0);
+
+if (broken) {
+  console.error('');
+  for (const [f, lines] of problems) {
+    console.error(`${f}  (${lines.length})`);
+    for (const line of lines) console.error(`  ->  ${line}`);
+  }
+  console.error(
+    `\n${broken} broken link(s) in ${problems.size} file(s)` +
+    ` — of ${checked} internal link(s) across ${files.length} file(s)`,
+  );
   process.exit(1);
 }
-console.log(`${checked} internal link(s) across ${files.length} file(s), all resolve`);
+console.log(
+  `${checked} internal link(s) and ${headings} heading anchor(s)` +
+  ` across ${files.length} file(s), all resolve`,
+);

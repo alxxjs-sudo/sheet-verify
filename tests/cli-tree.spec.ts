@@ -92,6 +92,29 @@ test.describe('a tree of report types', () => {
     expect(code).toBe(1);
   });
 
+  test('a failing case names the tables that failed, and what kind of difference', async () => {
+    // The one-line summary says how much failed. It does not say which, or
+    // whether the difference is a value, a formula or a column that moved --
+    // and a colleague reading only this log concluded the tool had missed
+    // differences it had in fact caught and written down.
+    await buildTree();
+    const { out } = cli(join(ROOT, 'reports', 'global_standard_cat', 'case_002'));
+
+    expect(out).toContain('1 table failing');
+    expect(out).toMatch(/table\s+values/);
+    expect(out).toMatch(/Premiums\s+2/);
+    // The report is still where the detail is, and its path is relative like
+    // every other path in the log.
+    expect(out).not.toMatch(/^\s+[A-Z]:\\/m);
+  });
+
+  test('a passing case gets no breakdown to read past', async () => {
+    await buildTree();
+    const { out } = cli(join(ROOT, 'reports', 'global_standard_cat', 'case_001'));
+    expect(out).toContain('✓');
+    expect(out).not.toMatch(/table\s+values/);
+  });
+
   test('--print-spec names every layer that was applied', async () => {
     const { out } = cli(join(ROOT, 'reports', 'global_standard_cat', 'case_002'), '--print-spec');
     expect(out).toContain('meta.json');
@@ -551,10 +574,11 @@ test.describe('a tree of report types', () => {
 
     const md = await readFile(join(ROOT, '!summary', 'run-summary.md'), 'utf8');
     expect(md).toContain('# Run summary');
-    // Grouped by report type, because that is the unit people work in --
-    // falling back to the folder path for a type that never named itself.
-    expect(md).toContain('## reports/global_standard_cat');
-    expect(md).toContain('## reports/srq');
+    // Grouped by report type, because that is the unit people work in. Neither
+    // folder here sets `reportType`, so both are named for the gap they are --
+    // with the folder kept, so two unnamed types stay two types.
+    expect(md).toContain('## Unspecified report type (reports/global_standard_cat)');
+    expect(md).toContain('## Unspecified report type (reports/srq)');
     expect(md).toMatch(/\| report type \| cases \| passed \| failed/);
     // Every case appears exactly once, under its own type.
     for (const c of ['case_001', 'case_002']) expect(md).toContain(c);
@@ -568,6 +592,84 @@ test.describe('a tree of report types', () => {
     const overview = wb.getWorksheet('Overview');
     const last = overview.getRow(overview.rowCount).values;
     expect(String(last[1])).toBe('All report types');
+  });
+
+  test('each report type gets a summary of its own, named after the type', async () => {
+    // The run summary answers "how did the run go". This answers the question
+    // that gets asked next and gets sent on: how did *my* report type go --
+    // without the ten types the reader does not work on.
+    const root = await downloadTree();
+    cli(root);
+
+    const md = await readFile(join(root, '!summary', 'comparison_report.md'), 'utf8');
+    expect(md).toContain('# comparison_report');
+    expect(md).toContain('**3 of 3 case(s) need attention.**');
+    for (const c of ['case_001', 'case_002', 'case_003']) expect(md).toContain(c);
+    // And nothing from the other type.
+    expect(md).not.toContain('validation_report/case_001');
+    expect(md).toContain('**Totals**');
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(join(root, '!summary', 'comparison_report.xlsx'));
+    const ws = wb.worksheets[0]!;
+    expect(String(ws.getCell('A1').value)).toContain('comparison_report');
+    // Title, totals, then the same header the run summary uses.
+    expect(String(ws.getCell('A3').value ?? '')).toBe('');
+    expect(String(ws.getCell('B3').value)).toBe('Case folder');
+    expect(ws.rowCount).toBe(6);
+  });
+
+  test('a type nobody named is called out as unnamed rather than given a name', async () => {
+    await buildTree();
+    cli(ROOT);
+    const names = await readdir(join(ROOT, '!summary'));
+    // The folder path is kept inside the name, so the two unnamed types here
+    // stay two files instead of overwriting each other.
+    expect(names).toContain('Unspecified report type (reports-srq).md');
+    expect(names).toContain('Unspecified report type (reports-global_standard_cat).md');
+  });
+
+  test('a summary for a type that no longer exists is cleared, but only by a full run', async () => {
+    const root = await downloadTree();
+    cli(root);
+    // As if a type had been renamed: its old summary is still sitting there,
+    // and reads exactly as current as the ones beside it.
+    const stale = join(root, '!summary', 'old_report_type.md');
+    await writeFile(stale, '# gone\n', 'utf8');
+
+    // A scoped run knows nothing about the types it did not touch, so it must
+    // not delete summaries that are still true.
+    cli(join(root, 'comparison_report'));
+    await access(stale);
+    await access(join(root, '!summary', 'validation_report.md'));
+
+    cli(root);
+    await expect(access(stale)).rejects.toThrow();
+    await access(join(root, '!summary', 'validation_report.md'));
+  });
+
+  test('a report type folder holding no cases is named, not passed over', async () => {
+    // With no cases it appears in no summary at all — and a type nobody is
+    // checking looks exactly like a type where everything passed.
+    const root = await downloadTree();
+    await mkdir(join(root, 'status_report'), { recursive: true });
+    await writeJson(join(root, 'status_report', 'meta.json'), { reportType: 'Status Report' });
+
+    const { out, code } = cli(root);
+    expect(out).toContain('1 report type folder(s) held no cases');
+    expect(out).toContain('status_report');
+    // Said, not failed: a folder can be waiting for its first download.
+    expect(code).toBe(1); // the six real cases fail; the empty folder adds nothing
+    expect(out).toContain('6 cases, 6 failing');
+  });
+
+  test('a type left out by "cases" is counted as set aside, not as empty', async () => {
+    const root = await downloadTree();
+    await writeJson(join(root, 'meta.json'), { cases: ['comparison_report/**'] });
+
+    const { out } = cli(root);
+    expect(out).toContain('3 not selected by "cases"');
+    expect(out).not.toContain('held no cases');
   });
 
   test('the summary folder sorts to the top of the tree', async () => {
@@ -638,10 +740,16 @@ test.describe('a tree of report types', () => {
     const md = await readFile(join(ROOT, '!summary', 'run-summary.md'), 'utf8');
     expect(md).toContain('Rebuilt from the results already on disk');
     expect(md).not.toContain('Scoped run');
+    // diff.json holds layer 1 only, so a rebuild never had the unchecked count.
+    // Printing a zero it did not measure would read as "nothing moved where
+    // nobody was looking", which is the one thing it cannot say.
+    expect(md).toContain('are not counted here');
     // Every case in the tree, not just the last thing that was run.
-    expect(md).toContain('## reports/global_standard_cat');
-    expect(md).toContain('## reports/srq');
+    expect(md).toContain('## Unspecified report type (reports/global_standard_cat)');
+    expect(md).toContain('## Unspecified report type (reports/srq)');
     expect(out).toContain('3 case(s)');
+    // The rebuild says how the tree stands, not only how much of it it read.
+    expect(out).toMatch(/passed, \d+ failing/);
   });
 
   test('--summary says which cases have never been run', async () => {
