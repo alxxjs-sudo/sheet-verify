@@ -166,13 +166,20 @@ a removed sheet, a failed invariant, a duplicate key — and those appear in
 A run covering more than one case also writes, at the root of what was run:
 
 ```
-output_comparison/!summary/
-  run-summary.md          how the run went — for reading and pasting into a message
-  run-summary.xlsx        the same, for sorting and filtering
-  Pro Forma.md            one report type, on its own — same two forms
-  Pro Forma.xlsx
-  Facility Report.md
-  Facility Report.xlsx
+output_comparison/
+  !summary/
+    run-summary.md      how the run went — for reading and pasting into a message
+    run-summary.xlsx    the same, for sorting and filtering
+  pro-forma/
+    !summary/
+      Pro Forma.md      this report type alone — the same two forms
+      Pro Forma.xlsx
+    case_001/
+    case_002/
+  facility_report/
+    !summary/
+      Facility Report.md
+      Facility Report.xlsx
 ```
 
 The name starts with `!` so the folder sorts to the top of the tree, above every
@@ -186,15 +193,24 @@ plain run and a `--recalc` run keep both instead of one overwriting the other.
 
 ### One file per report type
 
-Beside the run summary, each report type gets the same pair to itself, named
-after the type. The whole-run view answers *how did the run go*; this answers the
-question asked next, and the one that actually gets sent on: **how did my report
-type go** — without the ten types the reader does not work on.
+Each report type gets the same pair to itself, in **its own folder**, under a
+`!summary/` there. The whole-run view answers *how did the run go*; this answers
+the question asked next, and the one that actually gets sent on: **how did my
+report type go** — without the ten types the reader does not work on.
 
-The name comes from `reportType` in that type's `meta.json`, so it is written
-once beside the cases it names. A folder with no `meta.json`, or one that never
-set the key, is called **Unspecified report type**, with its folder path kept in
-the name so two unnamed types stay two files rather than overwriting each other.
+It sits with the type's cases rather than with the run summary because that is
+the folder already being worked in, and because eleven types stacked at the root
+is twenty-two files to scan past before reaching the one that matters.
+
+The file name comes from `reportType` in that type's `meta.json`, so it is
+written once beside the cases it names. A folder with no `meta.json`, or one
+that never set the key, is called **Unspecified report type**, with its folder
+path kept in the name — redundant against the folder it sits in, and worth it
+the moment the file is detached and mailed to somebody.
+
+A type's summary goes in the folder whose `meta.json` named the type. A
+`reportType` set in a `case.json` is ignored for this: a summary of a report
+type does not belong inside one of its cases.
 
 Each file carries its own timestamp, and is only rewritten by a run that covered
 that type — so a run narrowed to one type leaves the others describing their own
@@ -258,8 +274,8 @@ outside. The markdown calls it out under any type where it is non-zero.
 A type's own file is the same table with the totals spelled out rather than left
 to be added up, and the same warning under it.
 
-`npm run clean` removes the summary folder along with the `results/` folders,
-for the same reason: one left from the last run reads as current.
+`npm run clean` removes every `!summary/` folder along with the `results/`
+folders, for the same reason: one left from the last run reads as current.
 
 ## compared.xlsx
 

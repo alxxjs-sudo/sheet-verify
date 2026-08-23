@@ -22,6 +22,8 @@ import { join, relative, resolve, sep } from 'node:path';
 
 const DEFAULT_ROOT = 'output_comparison';
 const RESULT_DIR = 'results';
+/** Summaries: one at the tree root, and one inside each report type's folder. */
+const SUMMARY_DIR = '!summary';
 
 
 const args = process.argv.slice(2);
@@ -63,12 +65,19 @@ async function* resultsUnder(dir) {
     for (const name of RESULT_DIRS) if (names.includes(name)) yield join(dir, name);
   }
   for (const e of entries) {
-    if (e.isDirectory() && !RESULT_DIRS.has(e.name)) yield* resultsUnder(join(dir, e.name));
+    if (!e.isDirectory() || RESULT_DIRS.has(e.name)) continue;
+    // A report type's own summary sits in its folder. Taken whole and not
+    // descended into: there are no cases inside it, and it goes stale exactly
+    // as loudly as a results/ folder does.
+    if (e.name === SUMMARY_DIR) { yield join(dir, e.name); continue; }
+    yield* resultsUnder(join(dir, e.name));
   }
 }
 
-const found = [];
-for await (const p of resultsUnder(root)) found.push(p);
+// A Set: the walk above already reaches the summary folder at the root, and
+// the explicit pass below names it too. Removing it twice would count it twice.
+const seen = new Set();
+for await (const p of resultsUnder(root)) seen.add(p);
 
 /**
  * The run summary belongs to the whole run rather than to any case, so it lives
@@ -76,10 +85,12 @@ for await (const p of resultsUnder(root)) found.push(p);
  * results folder with a golden beside it, never reaches it. A summary left from
  * the last run reads as current just as loudly as a stale results/ folder does.
  */
-for (const name of [...RESULT_DIRS, '!summary']) {
+for (const name of [...RESULT_DIRS, SUMMARY_DIR]) {
   const p = join(root, name);
-  if (existsSync(p)) found.push(p);
+  if (existsSync(p)) seen.add(p);
 }
+
+const found = [...seen].sort();
 
 if (!found.length) {
   console.log(`nothing to clear under ${relative(process.cwd(), root) || root}`);

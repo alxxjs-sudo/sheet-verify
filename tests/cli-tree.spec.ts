@@ -390,10 +390,12 @@ test.describe('a tree of report types', () => {
 
     const r = spawnSync('node', ['scripts/clean-results.mjs', root, '--dry'], { encoding: 'utf8' });
     // Six cases, each with a results/ folder beside its golden/ folder, plus
-    // the !summary/ folder at the root holding the run summary.
-    expect(r.stdout).toContain('7 item(s) would be removed');
-    expect(r.stdout.match(/would remove/g)).toHaveLength(7);
+    // the !summary/ folder at the root and one inside each of the two report
+    // type folders.
+    expect(r.stdout).toContain('9 item(s) would be removed');
+    expect(r.stdout.match(/would remove/g)).toHaveLength(9);
     expect(r.stdout).toContain(join('tree-folders', '!summary'));
+    expect(r.stdout).toContain(join('tree-folders', 'comparison_report', '!summary'));
   });
 
   test('malformed JSON is reported with the file that contains it', async () => {
@@ -601,7 +603,11 @@ test.describe('a tree of report types', () => {
     const root = await downloadTree();
     cli(root);
 
-    const md = await readFile(join(root, '!summary', 'comparison_report.md'), 'utf8');
+    // In the type's own folder, not stacked with every other type at the root:
+    // eleven types is twenty-two files in one place, which is more to scan than
+    // it is worth.
+    const md = await readFile(
+      join(root, 'comparison_report', '!summary', 'comparison_report.md'), 'utf8');
     expect(md).toContain('# comparison_report');
     expect(md).toContain('**3 of 3 case(s) need attention.**');
     for (const c of ['case_001', 'case_002', 'case_003']) expect(md).toContain(c);
@@ -610,7 +616,8 @@ test.describe('a tree of report types', () => {
     expect(md).toContain('**Totals**');
 
     const wb = new ExcelJS.Workbook();
-    await wb.xlsx.readFile(join(root, '!summary', 'comparison_report.xlsx'));
+    await wb.xlsx.readFile(
+      join(root, 'comparison_report', '!summary', 'comparison_report.xlsx'));
     const ws = wb.worksheets[0]!;
     expect(String(ws.getCell('A1').value)).toContain('comparison_report');
     // Title, totals, then the same header the run summary uses.
@@ -622,11 +629,16 @@ test.describe('a tree of report types', () => {
   test('a type nobody named is called out as unnamed rather than given a name', async () => {
     await buildTree();
     cli(ROOT);
-    const names = await readdir(join(ROOT, '!summary'));
-    // The folder path is kept inside the name, so the two unnamed types here
-    // stay two files instead of overwriting each other.
-    expect(names).toContain('Unspecified report type (reports-srq).md');
-    expect(names).toContain('Unspecified report type (reports-global_standard_cat).md');
+    // With nothing naming the type, its summary goes in the folder holding the
+    // cases. The folder path is kept inside the file name too, so a pair of
+    // them read apart from their folders still say which is which.
+    expect(await readdir(join(ROOT, 'reports', 'srq', '!summary')))
+      .toContain('Unspecified report type (reports-srq).md');
+    expect(await readdir(join(ROOT, 'reports', 'global_standard_cat', '!summary')))
+      .toContain('Unspecified report type (reports-global_standard_cat).md');
+    // And the root holds the run summary alone.
+    expect((await readdir(join(ROOT, '!summary'))).sort())
+      .toEqual(['run-summary.md', 'run-summary.xlsx']);
   });
 
   test('a summary for a type that no longer exists is cleared, but only by a full run', async () => {
@@ -634,18 +646,19 @@ test.describe('a tree of report types', () => {
     cli(root);
     // As if a type had been renamed: its old summary is still sitting there,
     // and reads exactly as current as the ones beside it.
-    const stale = join(root, '!summary', 'old_report_type.md');
+    const stale = join(root, 'comparison_report', '!summary', 'old_report_type.md');
     await writeFile(stale, '# gone\n', 'utf8');
+    const other = join(root, 'validation_report', '!summary', 'validation_report.md');
 
     // A scoped run knows nothing about the types it did not touch, so it must
     // not delete summaries that are still true.
-    cli(join(root, 'comparison_report'));
+    cli(join(root, 'validation_report'));
     await access(stale);
-    await access(join(root, '!summary', 'validation_report.md'));
+    await access(other);
 
     cli(root);
     await expect(access(stale)).rejects.toThrow();
-    await access(join(root, '!summary', 'validation_report.md'));
+    await access(other);
   });
 
   test('a report type folder holding no cases is named, not passed over', async () => {

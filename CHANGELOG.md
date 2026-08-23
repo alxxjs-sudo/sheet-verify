@@ -4,6 +4,36 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.10.1 — 2026-08-23
+
+### A report type's summary moves into that report type's folder
+
+1.10.0 put them all beside the run summary. Eleven report types is twenty-two
+files in one folder, which is more to scan than it is worth — and the folder
+that sorts to the top of the tree is the one place that should stay short.
+
+Each type's pair now goes in a `!summary/` inside that type's own folder, which
+is the folder already being worked in:
+
+```
+output_comparison/
+  !summary/run-summary.md          the whole run, as before
+  pro-forma/!summary/Pro Forma.md  this type alone
+  pro-forma/case_001/
+```
+
+The file keeps the type in its name even though the folder says it too. That is
+redundant in the tree and worth it the moment the file is detached and mailed:
+three attachments called `summary.xlsx` are worse than one redundant name.
+
+The folder chosen is the one whose `meta.json` named the type. A `reportType`
+set in a `case.json` is ignored for placement — a summary of a report type does
+not belong inside one of its cases. Two folders declaring the same type share
+one summary, placed above both.
+
+`npm run clean` removes every `!summary/` folder, not only the one at the root.
+A full run clears the files 1.10.0 left at the root, so no manual tidying.
+
 ## 1.10.0 — 2026-08-23
 
 ### A summary for each report type, not only for the whole run

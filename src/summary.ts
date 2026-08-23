@@ -20,11 +20,15 @@ import { join } from 'node:path';
  * into a message; the workbook is for sorting and filtering, and for the
  * readers here who live in Excel and will not open a `.md` file.
  *
- * Each report type also gets a file of its own beside the run summary. The
+ * Each report type also gets a file of its own, in its own folder. The
  * whole-run view is the right shape for "how did the run go" and the wrong
  * shape for the message that actually gets sent, which is about one kind of
  * report and goes to the person who owns it. Sending them the tree-wide
  * summary means sending them ten types they do not work on.
+ *
+ * Those started out beside the run summary and were moved: eleven types is
+ * twenty-two files in one folder, which is more to scan than it is worth, and
+ * a type's summary is easiest to find in the folder already being worked in.
  */
 
 export type CaseVerdict = 'passed' | 'failed' | 'blessed' | 'could not run';
@@ -182,7 +186,7 @@ export function summaryMarkdown(
   out.push(
     '', '---', '',
     '_Per-case detail is in each case\'s `results/report.md`. Each report type also',
-    'has a file of its own beside this one._',
+    'has a summary of its own, in that type\'s own folder under `!summary/`._',
   );
   return out.join('\n') + '\n';
 }
@@ -253,8 +257,8 @@ export function typeSummaryMarkdown(
 
   out.push(
     '', '---', '',
-    '_Per-case detail is in each case\'s `results/report.md`. Every report type is',
-    'in `run-summary.md` beside this file._',
+    '_Per-case detail is in each case\'s `results/report.md`. Every report type at',
+    'once is in `run-summary.md`, in the `!summary/` folder at the top of the tree._',
   );
   return out.join('\n') + '\n';
 }
@@ -444,41 +448,73 @@ export async function writeTypeSummaryWorkbook(
   await wb.xlsx.writeFile(path);
 }
 
+export interface TypeSummary {
+  type: string;
+  /** The folder it was written into, which is the report type's own. */
+  dir: string;
+  markdown: string;
+  workbook: string;
+  cases: number;
+}
+
 export interface SummaryFiles {
   /** The whole run, every report type in one file. */
   markdown: string;
   workbook: string;
   /** One pair per report type, in run order. */
-  types: { type: string; markdown: string; workbook: string; cases: number }[];
+  types: TypeSummary[];
 }
 
 /**
- * Every summary file for a run, into one folder: the run-wide pair, and a pair
- * for each report type named after the type itself.
+ * Every summary file for a run.
+ *
+ * The run-wide pair goes in `dir`. Each report type's own pair goes beside its
+ * cases, in the folder `typeDirs` names for it -- twenty-two files in one
+ * folder was more than anyone wanted to scan, and a type's summary is easier
+ * to find in the folder already being worked in.
  */
 export async function writeSummary(
   dir: string,
   cases: CaseRecord[],
+  typeDirs: Map<string, string>,
   when = new Date(),
   scope: SummaryScope = {},
 ): Promise<SummaryFiles> {
-  await mkdir(dir, { recursive: true });
   const markdown = join(dir, `${RUN_SUMMARY}.md`);
   const workbook = join(dir, `${RUN_SUMMARY}.xlsx`);
 
-  const types: SummaryFiles['types'] = [];
-  const taken = new Set([RUN_SUMMARY]);
+  // Names are unique within a folder, not across the run, since that is where
+  // one file can overwrite another. `run-summary` is reserved wherever the
+  // run-wide pair lands, in case a report type is declared at the tree root.
+  const taken = new Map<string, Set<string>>([[dir, new Set([RUN_SUMMARY])]]);
+  const claim = (into: string, type: string): string => {
+    const names = taken.get(into) ?? new Set<string>();
+    taken.set(into, names);
+    return fileStem(type, names);
+  };
+
+  const types: TypeSummary[] = [];
   for (const [type, list] of grouped(cases)) {
-    const stem = fileStem(type, taken);
+    const into = typeDirs.get(type) ?? dir;
+    const stem = claim(into, type);
     types.push({
       type,
-      markdown: join(dir, `${stem}.md`),
-      workbook: join(dir, `${stem}.xlsx`),
+      dir: into,
+      markdown: join(into, `${stem}.md`),
+      workbook: join(into, `${stem}.xlsx`),
       cases: list.length,
     });
   }
 
-  await clearStale(dir, [markdown, workbook, ...types.flatMap((t) => [t.markdown, t.workbook])], scope);
+  // Per folder, because each holds a different set of files this run owns.
+  const keep = new Map<string, string[]>([[dir, [markdown, workbook]]]);
+  for (const t of types) {
+    keep.set(t.dir, [...(keep.get(t.dir) ?? []), t.markdown, t.workbook]);
+  }
+  for (const [into, files] of keep) {
+    await mkdir(into, { recursive: true });
+    await clearStale(into, files, scope);
+  }
 
   await writeFile(markdown, summaryMarkdown(cases, when, scope), 'utf8');
   await writeSummaryWorkbook(workbook, cases, when);

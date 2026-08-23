@@ -761,6 +761,64 @@ function reportTypeOf(spec: WorkbookSpec, root: string, caseDir: string): string
 }
 
 /**
+ * The folder a report type's own summary belongs in: the one whose `meta.json`
+ * named the type, or the folder holding the cases when nothing did.
+ *
+ * A `case.json` is skipped even when it sets `reportType`. It sits inside a
+ * single case, and a summary of a report type does not belong inside one of
+ * its cases.
+ */
+function reportTypeDir(layers: ConfigLayer[], caseDir: string): string {
+  for (let i = layers.length - 1; i >= 0; i--) {
+    const layer = layers[i]!;
+    if (basename(layer.path) === 'case.json') continue;
+    if (layer.spec.reportType?.trim()) return dirname(layer.path);
+  }
+  return dirname(caseDir);
+}
+
+/**
+ * The deepest folder holding all of them.
+ *
+ * Two folders can declare the same `reportType`, which makes them one type with
+ * one summary -- and it has to sit somewhere above both rather than inside
+ * whichever happened to run first.
+ */
+function commonAncestor(dirs: string[]): string {
+  const split = dirs.map((d) => d.split(sep));
+  const first = split[0]!;
+  let i = 0;
+  while (i < first.length && split.every((parts) => parts[i] === first[i])) i++;
+  return first.slice(0, i).join(sep);
+}
+
+/**
+ * Where each report type's summary goes. Built as the run goes, from the
+ * configuration each case resolved, so a type is placed by what named it.
+ */
+class TypeFolders {
+  private readonly seen = new Map<string, Set<string>>();
+
+  add(type: string, layers: ConfigLayer[], caseDir: string): void {
+    const dirs = this.seen.get(type) ?? new Set<string>();
+    dirs.add(reportTypeDir(layers, caseDir));
+    this.seen.set(type, dirs);
+  }
+
+  resolve(): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const [type, dirs] of this.seen) {
+      out.set(type, join(commonAncestor([...dirs]), SUMMARY_DIR, ...(
+        // A named results folder gets a subfolder of its own here too, so a
+        // plain run and a --recalc run keep their summaries side by side.
+        resultDir === RESULT_DIR ? [] : [resultDir]
+      )));
+    }
+    return out;
+  }
+}
+
+/**
  * How a case announces itself in the log: what kind of report it is, which
  * case, and what that case is for. The path moves to the line below, because
  * it is how the folder is found rather than what the run is about.
@@ -897,7 +955,8 @@ function printTypeSummaries(written: SummaryFiles): void {
   if (!written.types.length) return;
   const n = written.types.length;
   console.log(
-    `  ${n} report type summar${n === 1 ? 'y' : 'ies'} beside it — ` +
+    `  ${n} report type summar${n === 1 ? 'y' : 'ies'}, each in its type's own ` +
+    `${SUMMARY_DIR}/ — ` +
     // `x12`, not `(12)` -- a type with no name of its own already ends in a
     // parenthetical, and two in a row read as one broken one.
     oneLine(written.types.map((t) => `${t.type} ×${t.cases}`)),
@@ -913,6 +972,7 @@ function elapsed(ms: number): string {
 
 async function main(): Promise<number> {
   const started = Date.now();
+  const typeFolders = new TypeFolders();
   const args = parseArgs(process.argv.slice(2));
   resultDir = args.results;
   if (args.help) {
@@ -1033,6 +1093,7 @@ async function main(): Promise<number> {
       const layers = await configLayers(root, c.dir);
       const spec = layers.reduce((acc, l) => mergeSpecs(acc, l.spec), {} as WorkbookSpec);
       const type = reportTypeOf(spec, root, c.dir);
+      typeFolders.add(type, layers, c.dir);
       const label = layers.find((l) => basename(l.path) === 'case.json')?.spec.label;
       // Read plainly, not through readJson: that one validates a *config* and
       // rejects unknown keys, so every diff.json threw and every case looked
@@ -1065,7 +1126,9 @@ async function main(): Promise<number> {
       console.error(`sheet-verify: no cases under ${root}`);
       return 1;
     }
-    const written = await writeSummary(summaryDir(root), records, new Date(), { rebuilt: true });
+    const written = await writeSummary(
+      summaryDir(root), records, typeFolders.resolve(), new Date(), { rebuilt: true },
+    );
 
     const missing = records.filter((r) => r.verdict === 'could not run').length;
     const bad = records.filter((r) => r.verdict === 'failed').length;
@@ -1136,6 +1199,12 @@ async function main(): Promise<number> {
     // comes down the tree like the rest.
     const label = layers.find((l) => basename(l.path) === 'case.json')?.spec.label;
 
+    // Worked out once, and registered against the folder that named it, so
+    // every record below files the case under the same type and that type's
+    // summary lands beside its own cases.
+    const reportType = reportTypeOf(spec, root, c.dir);
+    typeFolders.add(reportType, layers, c.dir);
+
     // Re-blessing a pair kept in folders writes the new golden under the name
     // the new report came with, since that name carries the download it is.
     // Copying the content into the old file would leave a golden stamped with
@@ -1199,7 +1268,7 @@ async function main(): Promise<number> {
 `);
         failed++;
         records.push({
-          reportType: reportTypeOf(spec, root, c.dir),
+          reportType,
           name: c.name, label, verdict: 'could not run', summary: (e as Error).message,
         });
         continue;
@@ -1255,7 +1324,7 @@ async function main(): Promise<number> {
       const compared = result.diff?.sheets.filter((o) => o.status === 'compared') ?? [];
       const verdict: CaseVerdict = result.blessed ? 'blessed' : result.ok ? 'passed' : 'failed';
       records.push({
-        reportType: reportTypeOf(spec, root, c.dir),
+        reportType,
         name: c.name,
         label,
         verdict,
@@ -1273,7 +1342,7 @@ async function main(): Promise<number> {
       if (path) console.log(`    ${path}`);
       console.error(`    ${(e as Error).message}`);
       records.push({
-        reportType: reportTypeOf(spec, root, c.dir),
+        reportType,
         name: c.name, label, verdict: 'could not run', summary: (e as Error).message,
       });
     }
@@ -1296,9 +1365,10 @@ async function main(): Promise<number> {
     // --recalc run keep their summaries instead of one overwriting the other.
     // The default run owns the top of _summary/, which is the common path.
     const scoped = DISPLAY(relative(root, target));
-    const written = await writeSummary(summaryDir(root), records, new Date(), {
-      target: scoped && scoped !== '.' ? scoped : undefined,
-    });
+    const written = await writeSummary(
+      summaryDir(root), records, typeFolders.resolve(), new Date(),
+      { target: scoped && scoped !== '.' ? scoped : undefined },
+    );
     console.log(`
 ${DISPLAY(relative(process.cwd(), written.markdown))} — and the .xlsx beside it`);
     printTypeSummaries(written);

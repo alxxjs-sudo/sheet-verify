@@ -111,8 +111,8 @@ output_comparison/global_standard_cat_report/case_001/
 A run covering more than one case also writes `!summary/run-summary.md` and
 `run-summary.xlsx` at the root of the tree — named to sort above every report
 type, since it is the first thing to read: how the run went, grouped by report
-type, with a sheet per type. Each report type gets the same pair to itself,
-named after its `reportType`, for sending on to whoever owns that report. See
+type, with a sheet per type. Each report type also gets the same pair to itself,
+in a `!summary/` inside its own folder, for sending on to whoever owns it. See
 [the run summary](docs/reading-a-report.md#the-run-summary).
 
 Exit code is `0` when everything matched and `1` when it did not, so it drops
