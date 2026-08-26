@@ -22,3 +22,15 @@ examples/cli-cases/
 # report files visible to git the whole time.
 output_comparison/
 output-comparison/
+
+# The same rule, for the trees that hold the reports themselves. These are not
+# on every machine, which is exactly why they are listed before one appears:
+# a folder becomes visible to git the moment it lands, not the moment somebody
+# remembers it.
+report-comparison/
+report_comparison/
+actual_reports/
+actual-reports/
+test_data/
+test-data/
+others/
