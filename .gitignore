@@ -5,6 +5,10 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# `npm pack` output. The tarball belongs in the repository that consumes it,
+# not in this one -- see docs/using-in-another-repo.md.
+*.tgz
+
 # Test and example output, all written by a command that can be re-run
 tests/.fixtures/
 test-results/

@@ -388,14 +388,16 @@ test.describe('a tree of report types', () => {
     const root = await downloadTree();
     cli(root);
 
-    const r = spawnSync('node', ['scripts/clean-results.mjs', root, '--dry'], { encoding: 'utf8' });
+    const r = spawnSync('node', ['dist/cli.js', root, '--clean', '--dry'], { encoding: 'utf8' });
     // Six cases, each with a results/ folder beside its golden/ folder, plus
     // the !summary/ folder at the root and one inside each of the two report
     // type folders.
     expect(r.stdout).toContain('9 item(s) would be removed');
     expect(r.stdout.match(/would remove/g)).toHaveLength(9);
-    expect(r.stdout).toContain(join('tree-folders', '!summary'));
-    expect(r.stdout).toContain(join('tree-folders', 'comparison_report', '!summary'));
+    // Forward slashes: the CLI normalises every path it prints, so a Windows
+    // run reads the same as a POSIX one and the paths stay clickable.
+    expect(r.stdout).toContain('tree-folders/!summary');
+    expect(r.stdout).toContain('tree-folders/comparison_report/!summary');
   });
 
   test('malformed JSON is reported with the file that contains it', async () => {
@@ -718,7 +720,7 @@ test.describe('a tree of report types', () => {
     cli(ROOT);
     await access(join(ROOT, '!summary', 'run-summary.md'));
 
-    const r = spawnSync('node', ['scripts/clean-results.mjs', ROOT], { encoding: 'utf8' });
+    const r = spawnSync('node', ['dist/cli.js', ROOT, '--clean'], { encoding: 'utf8' });
     expect(r.status).toBe(0);
     // A summary left from the last run reads as current just as loudly as a
     // stale results/ folder does.
