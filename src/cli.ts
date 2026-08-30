@@ -494,18 +494,44 @@ const CONFIG_KEYS = new Set([
 ]);
 
 /**
+ * Keys that only mean something inside one sheet's settings. Finding one at the
+ * top level is what identifies the mistake below.
+ */
+const SHEET_KEYS = new Set([
+  'sheet', 'headerRow', 'endRow', 'columns', 'keyColumns', 'matchRowsByPosition',
+  'fillKeyDown', 'keySeparator', 'tolerance', 'ignoreColumns', 'ignoreRows',
+  'metadataCells', 'compareFormulas', 'formulaMode', 'requireCachedValues',
+  'trimStrings', 'looseHeaders', 'strictSchema', 'invariants', 'csv', 'tables',
+]);
+
+/** A value shaped like a sheet's settings: an object naming at least one. */
+function looksLikeSheetSpec(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  return Object.keys(value).some((k) => SHEET_KEYS.has(k));
+}
+
+/**
  * Catches a config that will quietly do nothing.
  *
  * Per-sheet settings belong under `sheets`, and writing them at the top level
  * is the easy mistake -- `{ "Occupancy": { "keyColumns": [...] } }` parses, is
  * accepted, and has no effect whatsoever. Nothing downstream would ever
  * mention it, and the sheet would go on being compared without the key.
+ *
+ * That mistake, and nothing else. This used to reject every key it did not
+ * recognise, which is a different and wrong rule: a `case.json` is a good place
+ * to describe a case to *whatever generates it* -- the datasets it runs on, the
+ * units, the environment -- and this tool has no business refusing a file
+ * because somebody else's fields are in it. Anything not shaped like a sheet's
+ * settings is left alone.
  */
-function unknownKeys(spec: WorkbookSpec): string[] {
-  // Anything starting with "//" is a note. JSON has no comments, so that is
-  // the convention people reach for, and a config worth annotating usually
-  // needs more than one note in it.
-  return Object.keys(spec).filter((k) => !CONFIG_KEYS.has(k) && !k.startsWith('//'));
+function misplacedSheetSpecs(spec: WorkbookSpec): string[] {
+  return Object.entries(spec)
+    // Anything starting with "//" is a note. JSON has no comments, so that is
+    // the convention people reach for.
+    .filter(([k]) => !CONFIG_KEYS.has(k) && !k.startsWith('//'))
+    .filter(([, v]) => looksLikeSheetSpec(v))
+    .map(([k]) => k);
 }
 
 async function readJson(path: string): Promise<WorkbookSpec | null> {
@@ -526,15 +552,18 @@ async function readJson(path: string): Promise<WorkbookSpec | null> {
 
   // Checked after parsing, and outside the catch, so this reads as what it is
   // rather than being re-labelled a syntax error.
-  const stray = unknownKeys(spec);
+  const stray = misplacedSheetSpecs(spec);
   if (stray.length) {
     throw new Error(
-      `${DISPLAY(path)} has ${stray.length === 1 ? 'a setting' : 'settings'} that would do ` +
-      `nothing: ${stray.map((k) => JSON.stringify(k)).join(', ')}.\n` +
+      `${DISPLAY(path)} has ${stray.length === 1 ? "a sheet's settings" : "sheets' settings"}` +
+      ` at the top level, where they do nothing: ` +
+      `${stray.map((k) => JSON.stringify(k)).join(', ')}.\n` +
       '  Per-sheet settings go inside "sheets". If you meant a sheet named ' +
       `${JSON.stringify(stray[0])}, write:\n` +
       `    { "sheets": { ${JSON.stringify(stray[0])}: { … } } }\n` +
-      `  Recognised at the top level: ${[...CONFIG_KEYS].join(', ')}`,
+      `  Recognised at the top level: ${[...CONFIG_KEYS].join(', ')}.\n` +
+      '  Anything else is left alone, so a case.json can also describe the case ' +
+      'to whatever generates it.',
     );
   }
   return spec;

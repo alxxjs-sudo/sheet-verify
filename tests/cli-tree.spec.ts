@@ -147,9 +147,55 @@ test.describe('a tree of report types', () => {
     await writeFile(own, '{ "Occupancy": { "keyColumns": ["Portfolio"] } }', 'utf8');
     const { out } = cli(join(ROOT, 'reports', 'srq'));
 
-    expect(out).toContain('would do nothing');
+    expect(out).toContain('do nothing');
     expect(out).toContain('Occupancy');
     expect(out).toContain('"sheets"');
+
+    await rm(own, { force: true });
+  });
+
+  test('a case.json may also describe the case to whatever generates it', async () => {
+    // The automation that produces these reports keeps its own settings in the
+    // same file -- the datasets it runs on, the units, the environment. One
+    // file describing one case to both halves is the right shape, and this used
+    // to refuse the whole run over fields that are none of its business.
+    const own = join(ROOT, 'reports', 'srq', 'case_001', 'case.json');
+    await writeJson(own, {
+      label: 'basic_comparison_report',
+      dataSets: [['verisk_dbms_loss_exposure'], ['rms_dbms_loss_exposure']],
+      settings: {
+        subtitle: 'Basic Comparison Report',
+        companyName: 'Test Company',
+        units: { loss: { lossUnits: 'Million', numberOfDecimals: '2' } },
+        language: 'English',
+      },
+      configuration: { perils: ['EQ', 'WS'] },
+    });
+    const { out } = cli(join(ROOT, 'reports', 'srq'));
+
+    expect(out).not.toContain('do nothing');
+    expect(out).not.toContain('dataSets');
+    // And the keys it does own still work, from the same file.
+    expect(out).toContain('basic_comparison_report');
+
+    await rm(own, { force: true });
+  });
+
+  test('but a sheet\'s settings at the top level are still refused', async () => {
+    // The mistake the check exists for, and the reason it cannot simply be
+    // dropped: this parses, is accepted, and has no effect whatsoever.
+    const own = join(ROOT, 'reports', 'srq', 'case_001', 'case.json');
+    await writeJson(own, {
+      dataSets: [['something']],
+      Occupancy: { keyColumns: ['Portfolio'], headerRow: 3 },
+    });
+    const { out, code } = cli(join(ROOT, 'reports', 'srq'));
+
+    expect(code).toBe(1);
+    expect(out).toContain('Occupancy');
+    expect(out).toContain('"sheets"');
+    // Named on its own -- the automation's fields are not swept up with it.
+    expect(out).not.toContain('dataSets');
 
     await rm(own, { force: true });
   });
@@ -159,7 +205,7 @@ test.describe('a tree of report types', () => {
     await writeFile(own, '{ "//": "why", "//keys": "and a second note", "label": "x" }', 'utf8');
     const { out } = cli(join(ROOT, 'reports', 'srq'));
 
-    expect(out).not.toContain('would do nothing');
+    expect(out).not.toContain('do nothing');
 
     await rm(own, { force: true });
   });

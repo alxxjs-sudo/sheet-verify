@@ -4,6 +4,31 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.10.2 — 2026-08-30
+
+### A case.json may also describe the case to whatever generates it
+
+The check that catches per-sheet settings written at the top level rejected
+*every* key it did not recognise. That is a different and wider rule than the
+mistake it was built for, and it refused a legitimate file: a `case.json` in a
+Playwright repository carrying the automation's own description of the case --
+the datasets it runs on, the units, the company name, the environment. One file
+describing one case to both the generator and the verifier is the right shape,
+and this tool has no business failing a run over fields that are not its.
+
+It now objects only when a top-level value is *shaped like a sheet's settings*:
+a plain object naming at least one of `keyColumns`, `headerRow`, `tolerance`,
+`columns`, `tables`, `invariants` and the rest. So this is still refused, and
+named on its own rather than alongside the automation's fields:
+
+    { "dataSets": [...], "Occupancy": { "keyColumns": ["Portfolio"] } }
+      -> has a sheet's settings at the top level, where they do nothing:
+         "Occupancy"
+
+while `dataSets`, `settings` and `configuration` beside it are left alone. The
+protection is unchanged for the mistake it exists to catch; only the false
+positive is gone.
+
 ## 1.10.1 — 2026-08-23
 
 ### A report type's summary moves into that report type's folder
