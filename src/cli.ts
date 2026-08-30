@@ -11,7 +11,6 @@ import { summarizeSweep } from './sweep.js';
 import { makeBare, cachedValueState } from './bare.js';
 import { proposeMeta } from './propose.js';
 import { mergeSheetSpec } from './workbook.js';
-import { clean, formatSize } from './clean.js';
 import type { LedgerScope } from './ledger.js';
 import type {
   DiffResult, WorkbookDiffResult, WorkbookSheetSpec, WorkbookSpec,
@@ -71,12 +70,6 @@ interface Args {
   results: string;
   /** Rebuild the run summary from results on disk, comparing nothing. */
   summaryOnly: boolean;
-  /** Delete every results/ and !summary/ folder under the target. */
-  clean: boolean;
-  /** With --clean: list what would go, delete nothing. */
-  dry: boolean;
-  /** Print the version and exit. */
-  version: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -84,14 +77,10 @@ function parseArgs(argv: string[]): Args {
     target: '', bless: false, printSpec: false, writeMeta: false, writeExpect: false,
     ledger: 'differences', sweep: true, bare: false, help: false,
     recalc: false, results: RESULT_DIR, summaryOnly: false,
-    clean: false, dry: false, version: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === '-h' || a === '--help') args.help = true;
-    else if (a === '-v' || a === '--version') args.version = true;
-    else if (a === '--clean') args.clean = true;
-    else if (a === '--dry' || a === '--dry-run') args.dry = true;
     else if (a === '--bless' || a === '--update') args.bless = true;
     else if (a === '--print-spec') args.printSpec = true;
     else if (a === '--write-meta') args.writeMeta = true;
@@ -247,11 +236,6 @@ OPTIONS
   --summary          rebuild !summary/ from the results already on disk and
                      stop. Compares nothing, so it is instant -- and it covers
                      the whole tree however narrow the last run was
-  --clean            delete every results/ and !summary/ folder under the
-                     target and stop. Only ones sitting beside a golden, so the
-                     two inputs and any config are never touched
-  --dry              with --clean: list what would go, delete nothing
-  -v, --version      print the installed version and exit
   -h, --help         this text
 
 EXIT CODE
@@ -436,20 +420,6 @@ async function findCases(
 }
 
 const exists = (p: string) => stat(p).then(() => true, () => false);
-
-/**
- * The installed version, read from the package rather than held in a constant.
- * A constant is one more thing to remember on a release, and the one time it is
- * forgotten it reports the previous version with total confidence.
- */
-async function installedVersion(): Promise<string> {
-  try {
-    const text = await readFile(new URL('../package.json', import.meta.url), 'utf8');
-    return (JSON.parse(text) as { version?: string }).version ?? 'unknown';
-  } catch {
-    return 'unknown';
-  }
-}
 
 /**
  * Folders that declare themselves a report type, at any depth.
@@ -1009,10 +979,6 @@ async function main(): Promise<number> {
     console.log(HELP.trim());
     return 0;
   }
-  if (args.version) {
-    console.log(await installedVersion());
-    return 0;
-  }
 
   const target = resolve(args.target || DEFAULT_ROOT);
   try {
@@ -1070,62 +1036,6 @@ async function main(): Promise<number> {
     console.error(`sheet-verify: "cases" selected none of the ${everything.length} cases under ${target}`);
     console.error(`  selected by: ${naming.join(', ')}`);
     return 1;
-  }
-
-  // Before the case walk: clearing a tree is about the folders, not the cases,
-  // and a tree whose cases are broken is exactly the one somebody needs to
-  // clear. Refusing to clean until the cases parse would be the wrong way
-  // round.
-  if (args.clean) {
-    const outcome = await clean(target, {
-      dry: args.dry,
-      resultDir: args.results,
-      summaryDir: SUMMARY_DIR,
-    });
-
-    if (!outcome.targets.length) {
-      console.log(`nothing to clear under ${DISPLAY(relative(process.cwd(), target)) || target}`);
-      return 0;
-    }
-
-    if (args.dry) {
-      for (const t of outcome.targets) {
-        console.log(
-          `would remove  ${DISPLAY(relative(process.cwd(), t.path))}  (${formatSize(t.bytes)})`,
-        );
-      }
-    } else if (outcome.groups.length) {
-      const width = Math.max(...outcome.groups.map((g) => g.name.length));
-      for (const g of outcome.groups) {
-        console.log(
-          `  ${g.name.padEnd(width)}  ${String(g.folders).padStart(3)}` +
-          ` folder${g.folders === 1 ? ' ' : 's'}  ${formatSize(g.bytes).padStart(8)}`,
-        );
-      }
-    }
-
-    console.log(
-      `\n${outcome.removed} item(s)${args.dry ? ' would be removed' : ' removed'}, ` +
-      `${formatSize(outcome.freed)}` +
-      (args.dry ? ' — re-run without --dry to do it' : ' freed'),
-    );
-
-    if (outcome.failures.length) {
-      console.error(`\n${outcome.failures.length} item(s) could NOT be removed:`);
-      for (const f of outcome.failures) {
-        console.error(`  ${DISPLAY(relative(process.cwd(), f.path))}  (${f.why})`);
-      }
-      console.error(
-        'Something is holding them open. Close any workbook from these folders in'
-        + ' Excel, and if the tree is inside OneDrive, pause syncing or move the tree'
-        + ' out of it: OneDrive keeps a handle while it uploads, and can restore what'
-        + ' you delete.'
-        + '\n\nThese folders still hold the PREVIOUS run. Delete them before trusting'
-        + ' what the next run reports.',
-      );
-      return 1;
-    }
-    return 0;
   }
 
   if (args.bare) {

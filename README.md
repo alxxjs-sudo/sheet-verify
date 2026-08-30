@@ -118,11 +118,6 @@ in a `!summary/` inside its own folder, for sending on to whoever owns it. See
 Exit code is `0` when everything matched and `1` when it did not, so it drops
 straight into CI.
 
-The reports do not have to live beside the tool. Point it at any folder and it
-reads that folder in place, so a Playwright suite that generates reports into
-its own repository can be verified there with nothing copied — see
-[using it in another repository](docs/using-in-another-repo.md).
-
 That is the whole workflow. Everything below is for when the defaults are not
 quite right, or when you want this inside a test suite instead.
 
@@ -386,7 +381,7 @@ Every script, and what it does:
 | `write:meta -- <type>` | generate a starting `meta.json` from the pairs |
 | `write:expect -- <case>` | record what a run verified, as a guard against losing it |
 | | |
-| `clean` | delete every `results/` and `!summary/` folder |
+| `clean` | delete every `results/` folder, and the run summary |
 | `clean:dry` | list what `clean` would delete, and delete nothing |
 | `fidelity -- <file>` | what a round-trip through the reader loses |
 | | |

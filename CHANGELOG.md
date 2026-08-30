@@ -4,63 +4,6 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
-## 1.11.0 — 2026-08-23
-
-### Run it against a tree in another repository
-
-The reports never had to live beside the tool -- the CLI has always taken a
-folder -- but nothing said so, and the workflow in practice was copying
-`output_comparison/` out of one repository and pasting it into this one. Point
-it at the folder instead and it reads it in place, writing `results/` and the
-summaries where the reports already are.
-
-[docs/using-in-another-repo.md](docs/using-in-another-repo.md) covers installing
-it per repository from a packed tarball, the `.gitignore` that commits the
-goldens and nothing else, and why copying the source in is the one arrangement
-that does interfere with a Playwright suite.
-
-That doc carries one trap worth repeating here. **A bare `!summary/` line in a
-`.gitignore` does the opposite of what it looks like.** `!` is gitignore's
-negation prefix, so the line reads as "un-ignore `summary/`", matches nothing,
-and the summary folder gets committed. It needs escaping: `\!summary/`.
-
-### `--clean`, so a maintenance command exists where the reports are
-
-`clean` lived in `scripts/`, which is not in the published package. A tree kept
-in another repository is exactly where stale results pile up, and a clean you
-cannot run there is not a clean. It is now `sheet-verify <folder> --clean`, with
-`--dry` to list first. `scripts/clean-results.mjs` is gone; `npm run clean` is
-unchanged from the outside.
-
-### `--version`
-
-There was no way to ask which version was installed. With the tool pinned in
-another repository's lockfile rather than sitting in front of you, that stops
-being a curiosity.
-
-### `pretest`
-
-The test suite spawns `dist/cli.js` as a subprocess, and nothing built it first
--- so `npm test` after editing `src/` tested the *previous* build. Every test
-run in this repository has been preceded by a manual `npm run build`, which was
-the habit compensating for it.
-
-### `@playwright/test` is an optional peer dependency
-
-It was a devDependency, which happened to work: npm does not install
-devDependencies of dependencies, so the matcher resolved to the consumer's
-Playwright. Working by accident is not the same as being declared. As an
-optional peer it is explicit, npm warns on a real mismatch, and nothing can
-quietly introduce a second Playwright -- two copies mean `expect.extend`
-patching a different instance from the one running the tests.
-
-### Also
-
-The four report trees that were not in `.gitignore` now are, in both spellings.
-`output_comparison/` was covered; `report-comparison/`, `others/`, `test_data/`
-and `actual_reports/` were not, and were absent from the machine, which is
-exactly why they were easy to leave out.
-
 ## 1.10.1 — 2026-08-23
 
 ### A report type's summary moves into that report type's folder
