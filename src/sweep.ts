@@ -4,7 +4,7 @@ import { parse } from 'csv-parse/sync';
 import ExcelJS from 'exceljs';
 import { columnRange, numToCol } from './a1.js';
 import { addressOf, impactOf, type FormulaCell } from './impact.js';
-import { canonHeader, toleranceFor } from './model.js';
+import { allowance, canonHeader, relativeToleranceFor, toleranceFor } from './model.js';
 import { metadataOn, parseMetadata, type MetadataRules } from './metadata.js';
 import { openWorkbook } from './open-xlsx.js';
 import { CSV_SHEET } from './reader-csv.js';
@@ -223,6 +223,14 @@ export interface SweepOptions {
    * reader has already said they do not care about.
    */
   tolerance?: number;
+  /**
+   * The `*` `relativeTolerance`, for the same cells and the same reason. Layer
+   * 2 works in displayed text rather than stored numbers, so it is the looser
+   * of the two readings -- but a drift the keyed comparison forgives and the
+   * sweep reports is a contradiction the reader has to resolve by hand, and
+   * they were told the run agrees with itself.
+   */
+  relativeTolerance?: number;
 }
 
 const DEFAULT_LIMIT = Number.MAX_SAFE_INTEGER;
@@ -445,6 +453,9 @@ interface ToleranceBand {
   byCol: Map<number, number>;
   /** The table's `*` entry, for a column inside its rows but not in its headers. */
   star: number;
+  /** The same two, for `relativeTolerance`. */
+  relByCol: Map<number, number>;
+  relStar: number;
 }
 
 /**
@@ -457,14 +468,17 @@ function toleranceBandsOf(compared: ComparedTable[]): Map<string, ToleranceBand[
   const out = new Map<string, ToleranceBand[]>();
   for (const t of compared) {
     const star = t.spec.tolerance['*'] ?? 0;
+    const relStar = t.spec.relativeTolerance['*'] ?? 0;
     const byCol = new Map<number, number>();
+    const relByCol = new Map<number, number>();
     for (const model of [t.base, t.next]) {
       for (const [name, col] of model.headerIndex) {
         if (byCol.has(col)) continue;
         byCol.set(col, toleranceFor(t.spec, name));
+        relByCol.set(col, relativeToleranceFor(t.spec, name));
       }
     }
-    if (!byCol.size && star === 0) continue;
+    if (!byCol.size && star === 0 && relStar === 0) continue;
     const key = canon(t.sheet);
     const bands = out.get(key) ?? [];
     // A table bounded left and right shares its rows with the table beside it,
@@ -478,6 +492,8 @@ function toleranceBandsOf(compared: ComparedTable[]): Map<string, ToleranceBand[
       toCol: t.spec.columns ? cols.to : Number.MAX_SAFE_INTEGER,
       byCol,
       star,
+      relByCol,
+      relStar,
     });
     out.set(key, bands);
   }
@@ -497,6 +513,12 @@ const bandAt = (
 const toleranceIn = (band: ToleranceBand | undefined, fallback: number, col: number): number =>
   band ? band.byCol.get(col) ?? band.star : fallback;
 
+const relativeToleranceIn = (
+  band: ToleranceBand | undefined,
+  fallback: number,
+  col: number,
+): number => (band ? band.relByCol.get(col) ?? band.relStar : fallback);
+
 /**
  * Whether two cells hold numbers that differ by no more than `tol`.
  *
@@ -510,8 +532,8 @@ const toleranceIn = (band: ToleranceBand | undefined, fallback: number, col: num
  * A formula whose text changed is a change whatever its result says, so those
  * are never tolerated.
  */
-function withinTolerance(a: string, b: string, tol: number): boolean {
-  if (tol <= 0) return false;
+function withinTolerance(a: string, b: string, tol: number, rel = 0): boolean {
+  if (tol <= 0 && !(rel > 0)) return false;
   if (isFormula(a) !== isFormula(b)) return false;
   if (isFormula(a) && isFormula(b) && parts(a).formula !== parts(b).formula) return false;
 
@@ -519,7 +541,7 @@ function withinTolerance(a: string, b: string, tol: number): boolean {
   const y = Number(textOf(b));
   if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
   if (textOf(a).trim() === '' || textOf(b).trim() === '') return false;
-  return Math.abs(x - y) <= tol;
+  return Math.abs(x - y) <= allowance(x, y, tol, rel);
 }
 
 function coverageOf(compared: ComparedTable[]): Map<string, Coverage> {
@@ -661,6 +683,7 @@ export async function sweep(
   const coverage = coverageOf(compared);
   const tolerances = toleranceBandsOf(compared);
   const fallbackTolerance = options.tolerance ?? 0;
+  const fallbackRelative = options.relativeTolerance ?? 0;
 
   const baseByCanon = new Map([...baseGrids.keys()].map((s) => [canon(s), s]));
   const nextByCanon = new Map([...nextGrids.keys()].map((s) => [canon(s), s]));
@@ -749,12 +772,15 @@ export async function sweep(
       // quiets the report without quietly editing what the run found.
       const band = bandAt(tolerances, sheet, row, column);
       const tol = toleranceIn(band, fallbackTolerance, column);
-      if (withinTolerance(b, n, tol)) {
+      const rel = relativeToleranceIn(band, fallbackRelative, column);
+      if (withinTolerance(b, n, tol, rel)) {
         tolerated++;
         if (toleratedCells.length < limit) {
           toleratedCells.push({
             ...record(),
-            tolerance: tol,
+            // The allowance this cell was measured by, which a relative rule
+            // resolves per cell. See the same reasoning in ledger.ts.
+            tolerance: allowance(Number(textOf(b)), Number(textOf(n)), tol, rel),
             // Named so the report can say which table absorbed the drift.
             ...(band ? { table: band.label } : {}),
           });

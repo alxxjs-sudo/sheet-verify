@@ -3,7 +3,8 @@ import type { Cell, CellValue, ResolvedSpec } from './types.js';
 import type { ComparedTable } from './workbook.js';
 import type { AffectedCell } from './sweep.js';
 import {
-  canonHeader, displayKey, equalValues, rowKeyMatcher, tableRange, toleranceFor,
+  allowance, canonHeader, displayKey, equalValues, relativeToleranceFor,
+  rowKeyMatcher, tableRange, toleranceFor,
 } from './model.js';
 
 /**
@@ -85,17 +86,23 @@ function normalised(c: Cell, spec: ResolvedSpec): string | null {
   return c.headerRef;
 }
 
-function statusOf(b: Cell, n: Cell, spec: ResolvedSpec, tol: number): CellStatus {
+function statusOf(
+  b: Cell,
+  n: Cell,
+  spec: ResolvedSpec,
+  tol: number,
+  rel: number,
+): CellStatus {
   if (spec.compareFormulas && normalised(b, spec) !== normalised(n, spec)) {
     return 'formula-differs';
   }
   if (b.kind !== n.kind && b.kind !== 'empty' && n.kind !== 'empty') return 'type-differs';
 
-  // The same rule the comparer applies, IEEE-754 slack included. Reimplemented
+  // The same rule the comparer applies, both tolerances included. Reimplemented
   // here once, it reported a total recomputed via a different route as a
   // difference of 0.00000000000001 -- while report.md, built from the diff,
   // said the same cell was fine.
-  if (!equalValues(b.value, n.value, tol)) return 'value-differs';
+  if (!equalValues(b.value, n.value, tol, rel)) return 'value-differs';
   if (typeof b.value !== 'number' || typeof n.value !== 'number') return 'match';
   if (b.value === n.value) return 'match';
 
@@ -259,8 +266,18 @@ export function* ledgerRows(
         }
 
         const tol = toleranceFor(spec, nextName);
-        const status = statusOf(bc, nc, spec, tol);
-        if (emit(status)) yield row(key, column, status, bc, nc, tol);
+        const rel = relativeToleranceFor(spec, nextName);
+        const status = statusOf(bc, nc, spec, tol, rel);
+        // What the cell was actually judged against, not what the column was
+        // configured with. A relative tolerance resolves to a different number
+        // on every cell -- that is the point of it -- so recording the column's
+        // setting here would print an allowance no cell was ever measured by,
+        // and the reader could not check the verdict against the gap beside it.
+        const applied =
+          typeof bc.value === 'number' && typeof nc.value === 'number'
+            ? allowance(bc.value, nc.value, tol, rel)
+            : tol;
+        if (emit(status)) yield row(key, column, status, bc, nc, applied);
       }
     }
 

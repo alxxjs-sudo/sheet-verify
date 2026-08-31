@@ -150,6 +150,19 @@ export interface SheetSpec {
    * applies per column name, with `*` as the fallback. Default 0 (exact).
    */
   tolerance?: number | Record<string, number>;
+  /**
+   * Numeric tolerance as a proportion of the value, applied alongside
+   * `tolerance` -- a cell passes if it is close enough by either. Same shape:
+   * a single number for every column, or a record keyed by column name with
+   * `*` as the fallback. Default 0 (off, and the comparison is exactly what it
+   * was before this existed).
+   *
+   * For recalculation drift in a workbook, 1e-12 is a reasonable starting
+   * point: Excel keeps 15 significant digits, so drift lands around 1e-15 to
+   * 1e-14 of the value whatever its magnitude, and 1e-12 clears that by a
+   * comfortable margin while staying far below any difference a person made.
+   */
+  relativeTolerance?: number | Record<string, number>;
   /** Columns excluded from all comparison (timestamps, run ids, ...). */
   ignoreColumns?: string[];
   /**
@@ -321,10 +334,11 @@ export interface WorkbookReader extends SheetReader {
 }
 
 export type ResolvedSpec = Required<
-  Omit<SheetSpec, 'tolerance' | 'invariants' | 'sheet' | 'csv'>
+  Omit<SheetSpec, 'tolerance' | 'relativeTolerance' | 'invariants' | 'sheet' | 'csv'>
 > & {
   sheet: string | number;
   tolerance: Record<string, number>;
+  relativeTolerance: Record<string, number>;
   invariants: Invariant[];
   csv: Required<CsvOptions>;
 };

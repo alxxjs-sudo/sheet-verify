@@ -180,6 +180,70 @@ test.describe('type and tolerance handling', () => {
     expect(strict.values.length).toBeGreaterThan(0);
   });
 
+  test('a relative tolerance scales with the number, where one flat figure cannot', async () => {
+    // One report, two magnitudes. The big cell drifts in the fifteenth
+    // significant digit -- the last one Excel stores, so a total rebuilt in a
+    // different order lands there and nothing has changed. The small cell moves
+    // by a third of itself, which is a change by any reading.
+    const base = await buildWorkbook('c30-base.xlsx', {
+      valueDrift: { 'P-1001': 126339393111.699, 'P-1004': 0.00026 },
+    });
+    const next = await buildWorkbook('c30-next.xlsx', {
+      valueDrift: { 'P-1001': 126339393111.6952, 'P-1004': 0.00035 },
+    });
+
+    // A flat tolerance gets both wrong, and in opposite directions. The noise
+    // on the big number is 0.0038 and so exceeds 0.001; a 35% move on the small
+    // number is 0.00009 and slips under it.
+    const flat = await verifySheet(base, next, { ...SPEC, tolerance: 0.001 });
+    const flatKeys = new Set(flat.values.map((v) => v.key));
+    expect(flatKeys.has('P-1001')).toBe(true);
+    expect(flatKeys.has('P-1004')).toBe(false);
+
+    // Judged in proportion as well, each lands the right way round: 3.0e-14 of
+    // its value is forgiven, 0.26 of its value is not.
+    const scaled = await verifySheet(base, next, {
+      ...SPEC, tolerance: 1e-9, relativeTolerance: 1e-12,
+    });
+    const scaledKeys = new Set(scaled.values.map((v) => v.key));
+    expect(scaledKeys.has('P-1001')).toBe(false);
+    expect(scaledKeys.has('P-1004')).toBe(true);
+  });
+
+  test('a relative tolerance does not forgive a difference someone made', async () => {
+    const base = await buildWorkbook('c31-base.xlsx');
+    const next = await buildWorkbook('c31-next.xlsx', { valueDrift: { 'P-1003': 249000 } });
+    const d = await verifySheet(base, next, {
+      ...SPEC, tolerance: 1e-9, relativeTolerance: 1e-12,
+    });
+
+    // 240000 -> 249000 is 3.75% of the value: ten orders of magnitude above
+    // anything recalculation produces, and nowhere near forgivable.
+    expect(d.values.some((v) => v.key === 'P-1003' && v.column === 'Sum Insured')).toBe(true);
+    expect(d.ok).toBe(false);
+  });
+
+  test('left unset it changes nothing, so an existing config compares as before', async () => {
+    const base = await buildWorkbook('c32-base.xlsx');
+    const next = await buildWorkbook('c32-next.xlsx', {
+      valueDrift: { 'P-1003': 240000.004 },
+    });
+
+    // The same drift, judged by the same absolute tolerance, with the relative
+    // rule left out and then written down as its default. Neither reading may
+    // differ from the other: a default that quietly forgave anything would be
+    // the hidden slack this rule was built to not be.
+    const unset = await verifySheet(base, next, { ...SPEC, tolerance: 0.01 });
+    const zero = await verifySheet(base, next, {
+      ...SPEC, tolerance: 0.01, relativeTolerance: 0,
+    });
+    expect(zero.values).toHaveLength(unset.values.length);
+    expect(unset.values).toHaveLength(0);
+
+    const strict = await verifySheet(base, next, { ...SPEC, tolerance: 0 });
+    expect(strict.values.length).toBeGreaterThan(0);
+  });
+
   test('ignored columns are excluded from comparison', async () => {
     const base = await buildWorkbook('c11-base.xlsx');
     const next = await buildWorkbook('c11-next.xlsx', { valueDrift: { 'P-1003': 249000 } });

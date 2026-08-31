@@ -140,6 +140,50 @@ tolerance of `0.01` means "ignore anything under a cent". Bear the scale of the
 column in mind: the same `0.01` on a rate column holding `0.05` is a fifth of
 the value.
 
+### relativeTolerance, for a report that spans magnitudes
+
+Where one report holds both `0.0002` and `126,339,393,111.699`, no single
+absolute figure fits. Excel stores 15 significant digits and no more, so the
+finest step it can represent depends entirely on magnitude: at `1.3e11` the last
+digit it holds is the *thousandths*, and a total rebuilt in a different order
+lands whole thousandths away with nothing having changed. At `5,000,000` that
+same thousandth is a hundred thousand times looser than the format's precision,
+and a real error of a cent goes unreported.
+
+`relativeTolerance` judges the gap as a proportion of the value instead. A cell
+passes if it is close enough by **either** rule:
+
+```
+|golden − actual|  ≤  max( tolerance, relativeTolerance × max(|golden|, |actual|) )
+```
+
+`tolerance` stays as the floor, because a proportion of almost-nothing is
+meaningless and a value near zero needs an absolute answer.
+
+```json
+{ "defaults": { "tolerance": 1e-9, "relativeTolerance": 1e-12 } }
+```
+
+That grants `0.126` on a figure of `1.26e11` and `1e-13` on a figure of `1`.
+The big number gets more room because it is big, and the small number gets less
+because it is small — with no threshold to tune and no cliff between one
+magnitude and the next.
+
+**`1e-12` is a reasonable starting point** for recalculation drift. Measured
+across this project's own cases, drift lands between `1e-16` and `5.4e-14` of
+the value whatever its magnitude, so `1e-12` clears it by a factor of about 19
+while staying ten orders of magnitude below any difference a person made.
+
+It takes the same shapes as `tolerance` — one number, or a record keyed by
+column with `*` as the fallback — and merges the same way down `defaults` →
+sheet → table. **It defaults to `0`**, so a config that does not mention it
+compares exactly as it did before this existed.
+
+Because the allowance is computed per cell rather than per column, that is what
+gets reported: the `Tolerance` column of `differences.xlsx` and the gap tables
+in `report.md` carry the number *that cell* was measured by, not the setting its
+column was given. A rule you cannot see working is the one thing this is not.
+
 **Both layers apply it.** Layer 1 looks the tolerance up by column name; layer 2
 works in addresses, so it reads the same per-column tolerances off the tables
 layer 1 compared, and falls back to the `*` entry from `defaults` for cells no
@@ -259,6 +303,7 @@ by the API, which is handed one case at a time:
 | `endRow` | *last row* | 1-based last row; set for you when a sheet declares `tables` |
 | `columns` | *every column* | column range this table occupies, `"H:J"`; set for you when a sheet holds tables side by side |
 | `tolerance` | `0` | number, or per-column record with `*` fallback |
+| `relativeTolerance` | `0` | the same, as a proportion of the value; a cell passes if either rule forgives it |
 | `ignoreColumns` | `[]` | columns excluded from comparison |
 | `ignoreRows` | `[]` | rows excluded from comparison, by key |
 | `keySeparator` | `␟` | joins composite key parts |

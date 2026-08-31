@@ -660,6 +660,42 @@ test.describe('cell ledger', () => {
     expect(within[0]!['Column']).toBe('Amount');
   });
 
+  test('records the allowance a cell was judged by, not the one its column was given', async () => {
+    const golden = await buildMultiSheet('led-rel-golden.xlsx');
+    const actual = await buildMultiSheet('led-rel-actual.xlsx', {
+      premiumDrift: { 'P-1001|2026-07': 2520.0000000004 },
+    });
+
+    const { compared } = await runWorkbook(golden, actual, {
+      sheets: {
+        Premiums: {
+          keyColumns: ['PolicyId', 'Period'],
+          tolerance: { Amount: 0 },
+          relativeTolerance: { Amount: 1e-12 },
+        },
+      },
+    });
+
+    const within = parseLedger(formatLedger(compared, 'all'))
+      .filter((r) => r['Status'] === 'within-tolerance');
+    const amount = within.find((r) => r['Column'] === 'Amount')!;
+    expect(amount).toBeDefined();
+
+    // A relative rule resolves to a different allowance on every cell, so the
+    // column's setting -- 1e-12 -- is not what this cell was measured by.
+    // Printing that would show the reader a number no cell was judged against,
+    // and they could not check the verdict against the gap beside it.
+    expect(Number(amount['Tolerance'])).toBeCloseTo(2520 * 1e-12, 15);
+    expect(Number(amount['Tolerance'])).not.toBe(1e-12);
+    expect(Number(amount['Delta'])).toBeLessThan(Number(amount['Tolerance']));
+
+    // The cell downstream of it has no relative rule of its own, so it is
+    // judged by the absolute default and says so. The two columns of one table
+    // can be measured by different allowances, and the ledger distinguishes.
+    const tax = within.find((r) => r['Column'] === 'Tax')!;
+    expect(Number(tax['Tolerance'])).toBe(0.001);
+  });
+
   test('none writes nothing at all', async () => {
     const golden = await buildMultiSheet('led-none-golden.xlsx');
     const actual = await buildMultiSheet('led-none-actual.xlsx');

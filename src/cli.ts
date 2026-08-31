@@ -499,7 +499,8 @@ const CONFIG_KEYS = new Set([
  */
 const SHEET_KEYS = new Set([
   'sheet', 'headerRow', 'endRow', 'columns', 'keyColumns', 'matchRowsByPosition',
-  'fillKeyDown', 'keySeparator', 'tolerance', 'ignoreColumns', 'ignoreRows',
+  'fillKeyDown', 'keySeparator', 'tolerance', 'relativeTolerance',
+  'ignoreColumns', 'ignoreRows',
   'metadataCells', 'compareFormulas', 'formulaMode', 'requireCachedValues',
   'trimStrings', 'looseHeaders', 'strictSchema', 'invariants', 'csv', 'tables',
 ]);

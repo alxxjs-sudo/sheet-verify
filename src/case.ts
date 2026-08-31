@@ -9,7 +9,7 @@ import {
   ledgerCsvLines, writeLedgerWorkbook, writeComparedWorkbook, type LedgerScope,
 } from './ledger.js';
 import { sweep, type AffectedCell, type SweepResult } from './sweep.js';
-import { DEFAULT_TOLERANCE } from './model.js';
+import { DEFAULT_RELATIVE_TOLERANCE, DEFAULT_TOLERANCE } from './model.js';
 import type { ComparedTable } from './workbook.js';
 
 /**
@@ -164,6 +164,14 @@ function blanketTolerance(tolerance: number | Record<string, number> | undefined
   return tolerance?.['*'] ?? DEFAULT_TOLERANCE;
 }
 
+/** The same, for `relativeTolerance`, whose default is off rather than 0.001. */
+function blanketRelativeTolerance(
+  relative: number | Record<string, number> | undefined,
+): number {
+  if (typeof relative === 'number') return relative;
+  return relative?.['*'] ?? DEFAULT_RELATIVE_TOLERANCE;
+}
+
 /**
  * Runs one case: copies the new report into the case folder, compares it
  * against the golden output, and writes the diff artefacts beside them.
@@ -230,6 +238,7 @@ export async function runCase(
       // tolerance would quiet the keyed comparison and leave the same float
       // noise in the headline count, which is where most people look first.
       tolerance: blanketTolerance(options.defaults?.tolerance),
+      relativeTolerance: blanketRelativeTolerance(options.defaults?.relativeTolerance),
     })
     : null;
 

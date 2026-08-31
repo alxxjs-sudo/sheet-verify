@@ -87,6 +87,9 @@ export function mergeSheetSpec(
     ...s,
     ...(tables ? { tables } : {}),
     tolerance: { ...asRecord(d.tolerance), ...asRecord(s.tolerance) },
+    relativeTolerance: {
+      ...asRecord(d.relativeTolerance), ...asRecord(s.relativeTolerance),
+    },
     ignoreColumns: [...(d.ignoreColumns ?? []), ...(s.ignoreColumns ?? [])],
     ignoreRows: [...(d.ignoreRows ?? []), ...(s.ignoreRows ?? [])],
     invariants: [...(d.invariants ?? []), ...(s.invariants ?? [])],

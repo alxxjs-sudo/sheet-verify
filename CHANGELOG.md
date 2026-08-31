@@ -4,6 +4,66 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.11.0 — 2026-08-31
+
+### `relativeTolerance`, for reports that span magnitudes
+
+A workbook holding both `0.0002` and `126,339,393,111.699` cannot be judged by
+one absolute tolerance, and until now that was the only kind there was.
+
+Excel stores 15 significant digits. What that buys in absolute terms depends
+entirely on magnitude: at `1.3e11` the finest step it can represent is a
+*thousandth*, so a total rebuilt in a different order lands whole thousandths
+from the one stored last month with nothing having changed — and the default
+tolerance of `0.001`, which is one such step, calls it a difference. At
+`5,000,000` the same `0.001` is a hundred thousand times looser than the
+format's own precision, and an error of a cent goes unreported.
+
+Measured across this project's cases, the effect is stark. Among cells whose gap
+is pure recalculation drift, the *absolute* gaps span fourteen orders of
+magnitude while the *relative* gaps span two — all of them between `1e-16` and
+`5.4e-14`, which is to say they are one phenomenon and only the size of the
+number underneath makes them look different. Judged absolutely, five drifting
+cells were absorbed in silence while another with *less* proportional drift was
+reported as a difference: the same wobble, opposite verdicts, decided by nothing
+but where the decimal point fell.
+
+A cell may now also be forgiven for being close in proportion:
+
+```
+|golden − actual|  ≤  max( tolerance, relativeTolerance × max(|golden|, |actual|) )
+```
+
+`tolerance` remains the floor, because a proportion of almost-nothing is
+meaningless and a value near zero needs an absolute answer. `1e-12` is a
+reasonable starting point for recalculation drift: about 19× clear of the worst
+drift measured, and ten orders of magnitude below any difference a person made.
+
+It takes the same shapes as `tolerance` — one number, or a record keyed by
+column with `*` as the fallback — merges the same way through `defaults` →
+sheet → table, and applies in both layers, so a gap layer 1 forgives no longer
+turns up in layer 2's headline count.
+
+**Nothing changes unless you ask for it.** `relativeTolerance` defaults to `0`,
+which reduces the rule to exactly the comparison that ran before it existed.
+
+This is deliberately not the hidden float slack that used to live in
+`equalValues` and was removed in 1.4.0, though the arithmetic is a cousin. That
+one was on for everybody, was never written down, and could not be seen doing
+its work — "nobody could say what it had swallowed" was the reason it went. This
+one is off by default, is written in a `meta.json` where it can be read, and is
+reported per cell: because a relative rule resolves to a different allowance on
+every value, `differences.xlsx` and `report.md` now carry the allowance *that
+cell* was measured by rather than the setting its column was given. Printing the
+column's number would show a figure no cell was ever judged against.
+
+### To recheck
+
+Nothing, unless you set it. If you do, read the "Inside the tolerance you set"
+section of a `report.md` afterwards and check the gaps it now absorbs are ones
+you meant to give away — that section exists so a tolerance set too wide is
+visible rather than silent.
+
 ## 1.10.2 — 2026-08-30
 
 ### A case.json may also describe the case to whatever generates it

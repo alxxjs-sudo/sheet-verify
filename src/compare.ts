@@ -2,7 +2,9 @@ import type {
   Cell, CellValue, DiffResult, FormulaDiff, InvariantFailure,
   MovedColumn, ResolvedSpec, SheetModel, TypeDiff, ValueDiff,
 } from './types.js';
-import { canonHeader, equalValues, rowKeyMatcher, toleranceFor } from './model.js';
+import {
+  canonHeader, equalValues, relativeToleranceFor, rowKeyMatcher, toleranceFor,
+} from './model.js';
 import { dialectDrift } from './reader-csv.js';
 
 /** Same-row column dependencies, read off the header-resolved formula. */
@@ -139,7 +141,8 @@ export function compare(base: SheetModel, next: SheetModel, spec: ResolvedSpec):
       }
 
       const tol = toleranceFor(spec, pair.next);
-      if (!equalValues(bc.value, nc.value, tol)) {
+      const rel = relativeToleranceFor(spec, pair.next);
+      if (!equalValues(bc.value, nc.value, tol, rel)) {
         changedInRow.add(pair.next);
         const delta =
           typeof bc.value === 'number' && typeof nc.value === 'number'

@@ -83,6 +83,54 @@ export const KEY_OCCURRENCE = ' ×';
  */
 export const DEFAULT_TOLERANCE = 0.001;
 
+/**
+ * Relative tolerance applied when a config names none: off.
+ *
+ * `tolerance` asks how many units apart two numbers are. That question has no
+ * single right answer across a report whose figures run from 0.0002 to 1.3e11,
+ * because Excel stores 15 significant digits and nothing more: at 1.3e11 the
+ * last digit it can hold sits at the thousandths, so a total rebuilt in a
+ * different order lands whole thousandths away and a flat 0.001 calls it a
+ * difference. At 5,000,000 that same 0.001 is a hundred thousand times looser
+ * than the format's own precision, and a real error of a cent goes unreported.
+ *
+ * Measured on this project's own cases, the effect is stark. Of the cells whose
+ * gap is pure recalculation drift, the ABSOLUTE gaps span fourteen orders of
+ * magnitude while the RELATIVE gaps span two, all of them between 1e-16 and
+ * 5.4e-14 -- which is to say they are all the same phenomenon, and only the
+ * magnitude of the number they sit on makes them look different. Judged by
+ * `tolerance` alone, five drifting cells were absorbed in silence while another
+ * with LESS relative drift was reported as a difference, decided by nothing but
+ * where the decimal point fell.
+ *
+ * So a cell may now also be forgiven for being close in proportion:
+ *
+ *     |a - b| <= max(tolerance, relativeTolerance * max(|a|, |b|))
+ *
+ * `tolerance` stays as the floor, because a proportion of almost-nothing is
+ * meaningless and a value near zero needs an absolute answer.
+ *
+ * This is deliberately NOT the hidden float slack that used to live in
+ * `equalValues`, though the arithmetic is a cousin of it. That one was on for
+ * everybody, was never written down, and could not be seen doing its work --
+ * "nobody could say what it had swallowed" was the reason it went. This one
+ * defaults to 0, so a config that does not ask for it compares exactly as
+ * before; it is written in a meta.json where it can be read; and every cell it
+ * forgives is counted and listed with the allowance that forgave it, which for
+ * a relative rule is computed per cell rather than per column.
+ */
+export const DEFAULT_RELATIVE_TOLERANCE = 0;
+
+/**
+ * The gap two numbers are allowed, given both rules. The larger of the two
+ * wins: they are alternatives, not conditions, and a cell close enough by
+ * either measure is close enough.
+ */
+export function allowance(a: number, b: number, tol: number, rel: number): number {
+  if (!(rel > 0)) return tol;
+  return Math.max(tol, rel * Math.max(Math.abs(a), Math.abs(b)));
+}
+
 export function resolveSpec(spec: SheetSpec): ResolvedSpec {
   if (!spec.keyColumns?.length && !spec.matchRowsByPosition) {
     throw new Error(
@@ -96,6 +144,10 @@ export function resolveSpec(spec: SheetSpec): ResolvedSpec {
     typeof spec.tolerance === 'number'
       ? { '*': spec.tolerance }
       : { '*': DEFAULT_TOLERANCE, ...(spec.tolerance ?? {}) };
+  const rel =
+    typeof spec.relativeTolerance === 'number'
+      ? { '*': spec.relativeTolerance }
+      : { '*': DEFAULT_RELATIVE_TOLERANCE, ...(spec.relativeTolerance ?? {}) };
 
   return {
     sheet: spec.sheet ?? 0,
@@ -107,6 +159,7 @@ export function resolveSpec(spec: SheetSpec): ResolvedSpec {
     fillKeyDown: spec.fillKeyDown ?? false,
     keySeparator: spec.keySeparator ?? KEY_SEP,
     tolerance: tol,
+    relativeTolerance: rel,
     ignoreColumns: spec.ignoreColumns ?? [],
     ignoreRows: spec.ignoreRows ?? [],
     metadataCells: spec.metadataCells ?? [],
@@ -198,24 +251,26 @@ export function rowKeyMatcher(patterns: string[]): (key: string) => boolean {
  * and the cell ledger are two views of one run, and a ledger that applies a
  * stricter rule reports differences the report says do not exist.
  */
-export function equalValues(a: CellValue, b: CellValue, tol: number): boolean {
+export function equalValues(
+  a: CellValue,
+  b: CellValue,
+  tol: number,
+  rel = 0,
+): boolean {
   if (a === null && b === null) return true;
   if (a === null || b === null) return false;
   if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
   if (typeof a === 'number' && typeof b === 'number') {
     if (Number.isNaN(a) && Number.isNaN(b)) return true;
-    // Only `tolerance` absorbs a gap. It defaults to DEFAULT_TOLERANCE rather
-    // than to zero, and every cell it forgives is counted and listed.
+    // Two rules, either of which forgives: `tolerance` in units and
+    // `relativeTolerance` in proportion. See DEFAULT_RELATIVE_TOLERANCE for
+    // why one number cannot cover a report spanning 0.0002 to 1.3e11.
     //
-    // This used to carry slack of scale x 1e-12 as well, on the reasoning that
-    // Excel keeps 15 significant digits so a smaller gap is rounding from a
-    // different order of operations rather than a change. True as far as it
-    // goes, and the wrong trade: a cell whose stored values differ is a cell
-    // that differs, and deciding on the reader's behalf that they did not want
-    // to know leaves the report unable to show the full reach of a change.
-    // Judging which differences matter is the reader's job; `tolerance` is how
-    // they say so, per column, deliberately.
-    return Math.abs(a - b) <= tol;
+    // Both are the reader's to set and both are reported. Neither is a hidden
+    // allowance: `relativeTolerance` is 0 unless a config asks for it, and a
+    // cell either forgives is counted and listed with the allowance that
+    // applied to it. Judging which differences matter stays the reader's job.
+    return Math.abs(a - b) <= allowance(a, b, tol, rel);
   }
   if (typeof a === 'boolean' || typeof b === 'boolean') return a === b;
   return String(a) === String(b);
@@ -223,6 +278,10 @@ export function equalValues(a: CellValue, b: CellValue, tol: number): boolean {
 
 export function toleranceFor(spec: ResolvedSpec, column: string): number {
   return spec.tolerance[column] ?? spec.tolerance['*'] ?? 0;
+}
+
+export function relativeToleranceFor(spec: ResolvedSpec, column: string): number {
+  return spec.relativeTolerance[column] ?? spec.relativeTolerance['*'] ?? 0;
 }
 
 export interface RawCell {
