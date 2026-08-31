@@ -4,6 +4,29 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.11.1 — 2026-08-31
+
+### A table that failed on errors now says so
+
+The breakdown printed under a failing case named six measures -- values,
+formulas, types, invariants, rows and columns -- and `errors` was not one of
+them. But errors count towards `defects` like any difference, so a table fails
+on them alone: a key column the config names and the sheet does not have, a
+formula with no cached value.
+
+Such a table appeared in the breakdown with a zero under every column and
+nothing saying why. Reported from the field as "why do we display Geography if
+it's 0 under Values", which is exactly the right question -- the row announced a
+failure and then declined to explain it.
+
+The quieter half was worse. Rows are ordered by the sum of those measures, so a
+table failing only on errors scored zero, sorted last, and with five other
+failures dropped off the end of the table entirely. The table nobody could
+compare is the one most worth naming, and it was the first to go.
+
+`errors` is now a measure. The column appears only when something is non-zero,
+so a run without errors prints exactly what it printed before.
+
 ## 1.11.0 — 2026-08-31
 
 ### `relativeTolerance`, for reports that span magnitudes

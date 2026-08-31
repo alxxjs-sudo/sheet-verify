@@ -108,6 +108,51 @@ test.describe('a tree of report types', () => {
     expect(out).not.toMatch(/^\s+[A-Z]:\\/m);
   });
 
+  test('a table that failed on errors says so, instead of showing zero everywhere', async () => {
+    // A key column the config names and the sheet does not have fails the
+    // table through `errors`, which was not one of the measures this table can
+    // print. So it appeared with a 0 under every column and nothing saying
+    // why -- and since the rows are ordered by the sum of those measures, it
+    // scored 0, sorted last, and with five other failures would have dropped
+    // off the end entirely. The table nobody could compare is the one most
+    // worth naming.
+    const dir = join(DIR, 'tree-errs', 'case_001');
+    await rm(join(DIR, 'tree-errs'), { recursive: true, force: true });
+    await mkdir(dir, { recursive: true });
+
+    const build = async (name: string, drift: number) => {
+      const wb = new ExcelJS.Workbook();
+      const led = wb.addWorksheet('Ledger');
+      led.addRow(['Ref', 'Amount']);
+      led.addRow(['R-1', 10 + drift]);
+      led.addRow(['R-2', 20]);
+      const tot = wb.addWorksheet('Totals');
+      tot.addRow(['Band', 'Value']);
+      tot.addRow(['B-1', 1]);
+      const path = join(DIR, name);
+      await wb.xlsx.writeFile(path);
+      return path;
+    };
+    await cp(await build('tree-errs-g.xlsx', 0), join(dir, 'golden.xlsx'));
+    await cp(await build('tree-errs-a.xlsx', 5), join(dir, 'actual.xlsx'));
+
+    await writeJson(join(dir, 'case.json'), {
+      sheets: {
+        Ledger: { keyColumns: ['Ref'] },
+        // Names a column neither file has.
+        Totals: { keyColumns: ['Nope'] },
+      },
+    });
+
+    const { out, code } = cli(join(DIR, 'tree-errs'));
+    expect(code).toBe(1);
+
+    // Both causes are columns now, so each row accounts for its own failure.
+    expect(out).toMatch(/table\s+values\s+errors/);
+    expect(out).toMatch(/Ledger\s+1\s+0/);
+    expect(out).toMatch(/Totals\s+0\s+[1-9]/);
+  });
+
   test('a passing case gets no breakdown to read past', async () => {
     await buildTree();
     const { out } = cli(join(ROOT, 'reports', 'global_standard_cat', 'case_001'));

@@ -915,6 +915,14 @@ const MEASURES: Measure[] = [
     cell: (d) => `${d.schema.added.length}/${d.schema.removed.length}`,
     found: (d) => d.schema.added.length + d.schema.removed.length,
   },
+  // Errors count towards `defects` like any difference, so they fail a table on
+  // their own -- a key column the config names and the sheet does not have, a
+  // formula with no cached value. Left out of this list they were invisible
+  // twice over: the table appeared in the breakdown with a zero under every
+  // column and nothing saying why, and because `weight` is the sum of these
+  // measures it scored 0, sorted last, and dropped off the end of the five.
+  // A table nobody could compare is the one most worth naming.
+  { head: 'errors', cell: (d) => count(d.errors.length), found: (d) => d.errors.length },
 ];
 
 const count = (v: number): string => v.toLocaleString('en-US');
