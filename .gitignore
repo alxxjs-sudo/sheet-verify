@@ -34,3 +34,13 @@ actual-reports/
 test_data/
 test-data/
 others/
+
+# Captured sessions and the templates they produce. Network captures carry live
+# cookies, and the templates carry real programs and treaty terms, so this tree
+# is confidential on both counts.
+#
+# Checked with `git check-ignore -v <dir>` and NOT a trailing slash: with one,
+# git will happily report a match against a blank line in this file and exit 0,
+# which reads as "ignored" and is not. `git status` is the honest answer.
+template_comp_data/
+template-comp-data/
