@@ -18,6 +18,20 @@ npm run clean:templates                # clear the results folders
 
 Exit code is 1 when anything fails, 0 otherwise.
 
+`<folder>` is the templates root -- the folder holding one folder per kind. It
+does not have to sit in this repository:
+
+```bash
+npm run compare:templates -- ../edison-e2e/comparison/templates
+```
+
+Naming a single kind's folder works too, for when only that one is being worked
+on:
+
+```bash
+npm run compare:templates -- ../edison-e2e/comparison/templates/program_selection_template
+```
+
 This is separate from `npm run compare` in every way that matters: separate
 tree, separate command, separate results. Nothing it does touches the report
 comparison, and it uses none of that machinery.

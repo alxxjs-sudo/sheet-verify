@@ -6,6 +6,11 @@
  *   npm run compare:templates -- <folder>  verify somewhere else
  *   npm run clean:templates                clear the results folders
  *
+ * <folder> is the templates root, holding a folder per kind. Naming one kind's
+ * folder works too -- it is the obvious thing to reach for when only one of them
+ * is being worked on, and reading it as a root would report every case in it as
+ * a kind nobody has a descriptor for.
+ *
  * Run on demand, over a tree the automation filled, the same way the report
  * comparison is run. The two inputs are read and never written to; results are
  * written beside each case.
@@ -26,7 +31,7 @@
  */
 import { readdir, mkdir, writeFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
 import { compareCase } from './compare.mjs';
 import { report } from './report.mjs';
 
@@ -43,20 +48,31 @@ if (!existsSync(ROOT)) {
   process.exit(1);
 }
 
+const descriptorFor = (kind) => join(HERE, 'templates', kind, 'index.mjs');
+
+// The root holds a folder per kind. Naming one kind's folder directly is the
+// obvious thing to reach for when only one of them is being worked on, so take
+// that as well -- read as a root it would report every case inside it as a kind
+// nobody wrote a descriptor for, which looks like a missing descriptor and is
+// really a path one level too deep.
+const named = basename(resolve(ROOT));
+const kinds = existsSync(descriptorFor(named))
+  ? [{ kind: named, dir: ROOT }]
+  : (await dirs(ROOT)).map((kind) => ({ kind, dir: join(ROOT, kind) }));
+
 let cases = 0;
 let failing = 0;
 const unknown = [];
 
-for (const kind of await dirs(ROOT)) {
-  const descriptorPath = join(HERE, 'templates', kind, 'index.mjs');
-  if (!existsSync(descriptorPath)) {
+for (const { kind, dir } of kinds) {
+  if (!existsSync(descriptorFor(kind))) {
     unknown.push(kind);
     continue;
   }
   const descriptor = (await import(`./templates/${kind}/index.mjs`)).default;
 
-  for (const name of await dirs(join(ROOT, kind))) {
-    const caseDir = join(ROOT, kind, name);
+  for (const name of await dirs(dir)) {
+    const caseDir = join(dir, name);
     if (!existsSync(join(caseDir, 'template'))) continue;
     cases++;
 
