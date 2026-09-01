@@ -35,12 +35,17 @@ test_data/
 test-data/
 others/
 
-# Captured sessions and the templates they produce. Network captures carry live
-# cookies, and the templates carry real programs and treaty terms, so this tree
-# is confidential on both counts.
+# Template verification: the captures a run leaves behind, the templates
+# themselves, and anything derived from them. Confidential on the same footing
+# as the report trees above -- a captured request carries live session cookies,
+# and a template carries real programs and treaty terms.
 #
-# Checked with `git check-ignore -v <dir>` and NOT a trailing slash: with one,
-# git will happily report a match against a blank line in this file and exit 0,
-# which reads as "ignored" and is not. `git status` is the honest answer.
+# Check these with `git check-ignore -v <dir>` and NOT a trailing slash. With
+# one, git reports a match against a blank line in this file and exits 0, which
+# reads as "ignored" and is not. `git status` is the honest answer.
 template_comp_data/
 template-comp-data/
+basic_template_comparison/
+basic-template-comparison/
+template_comparison/
+template-comparison/
