@@ -134,6 +134,16 @@ const FAULTS = [
     },
   },
   {
+    name: 'the rule that paints editable columns is dropped',
+    expect: (o) => !o.painted.ok,
+    plant(ws, spec) {
+      if (!spec.conditionalFills || !ws.conditionalFormattings?.length) return null;
+      const gone = ws.conditionalFormattings.length;
+      ws.conditionalFormattings = [];
+      return `${gone} conditional format(s) removed`;
+    },
+  },
+  {
     name: 'a column nobody checks appears',
     expect: (o) => o.coverage.unchecked.length > 0,
     plant(ws, spec) {

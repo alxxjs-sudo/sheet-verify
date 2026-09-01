@@ -17,13 +17,13 @@ const show = (v) => {
 export function report(kind, name, outcome) {
   const lines = [];
   const md = [];
-  const { coverage, derived, markers, fills, blocks } = outcome;
+  const { coverage, derived, markers, fills, blocks, painted } = outcome;
 
   md.push(`# ${kind} · ${name}`, '');
   md.push(`Template: \`${outcome.file}\`, sheet \`${outcome.sheet}\``, '');
 
   const total = outcome.results.reduce((t, r) => t + (r.findings?.length ?? 0), 0)
-    + fills.findings.length + (markers?.findings.length ?? 0)
+    + fills.findings.length + (markers?.findings.length ?? 0) + (painted?.findings.length ?? 0)
     + (derived?.findings.length ?? 0) + (blocks?.findings.length ?? 0)
     + (coverage?.unchecked.length ?? 0) + (coverage?.shadowed.length ?? 0);
 
@@ -187,6 +187,22 @@ export function report(kind, name, outcome) {
       lines.push(`    markers ${n(markers.findings.length)} problem(s)`);
       md.push('| Column | Problem |', '| --- | --- |');
       for (const f of markers.findings) md.push(`| ${f.column} | ${f.problem} |`);
+      md.push('');
+    }
+  }
+
+  if (painted?.checked || painted?.findings.length) {
+    md.push('## Colour applied by rule', '');
+    if (painted.ok) {
+      md.push(
+        `${n(painted.checked)} column(s) carry the rule that paints them, so the marker in the `
+        + 'header is what a reader actually sees.',
+        '',
+      );
+    } else {
+      lines.push(`    conditional fills ${n(painted.findings.length)} problem(s)`);
+      md.push('| Group | Column | Problem |', '| --- | --- | --- |');
+      for (const f of painted.findings) md.push(`| ${f.group} | ${f.column} | ${f.problem} |`);
       md.push('');
     }
   }

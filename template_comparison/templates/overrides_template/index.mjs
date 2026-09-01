@@ -146,4 +146,20 @@ export default {
   fills: {
     header: { argb: 'FF006D9E', row: 'header' },
   },
+
+  /**
+   * The yellow, which is not a fill on any cell.
+   *
+   * Every header cell carries a conditional format -- endsWith "*" -> paint
+   * FFFFFF00 -- so the colour is computed from the header text. The marker and
+   * the yellow are one contract, not two, which is why checking the " *" set
+   * checks what a reader sees.
+   *
+   * The rules are checked separately because dropping them leaves every " *" in
+   * place while nothing is yellow any more: the sheet would still list its
+   * editable columns and stop showing them.
+   */
+  conditionalFills: {
+    editable: { argb: 'FFFFFF00', row: 'header', type: 'endsWith', text: '*' },
+  },
 };

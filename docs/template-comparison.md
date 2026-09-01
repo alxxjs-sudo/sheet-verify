@@ -67,11 +67,11 @@ yellowish are editable in the UI"*.
 **`overrides_template`** — two shapes under one kind, because overriding a
 marketplace layer and overriding a MetaRisk treaty are the same feature with
 different columns. The descriptor names both variants (`MarketPlace Layer`,
-`MetaRisk Treaty`) and the workbook decides which it is. Header on row 4,
-nothing painted yellow; editable columns are marked with a trailing `*` in the
-header instead. A1 here says *"Do not alter the existing "Type" row and sheet
-name, as it will make the template unrecognizable by the application"*, which
-makes the sheet name part of the contract — a renamed sheet fails the run.
+`MetaRisk Treaty`) and the workbook decides which it is. Header on row 4.
+Editable columns are yellow here too, but reached a different way — see below.
+A1 says *"Do not alter the existing "Type" row and sheet name, as it will make
+the template unrecognizable by the application"*, which makes the sheet name
+part of the contract: a renamed sheet fails the run.
 
 ## What gets checked
 
@@ -95,11 +95,24 @@ are declared in the descriptor with a reason; anything else left unchecked
 **fails the case**, so a column added in a future release is noticed the first
 time it appears rather than the first time it is wrong.
 
-**The fills, and the markers.** The two ways these templates say "you may edit
-this". Checked in both directions: every column that should carry it does, and
-no column that should not does. The second direction is the one worth having —
-a field that quietly became editable looks exactly like a field that was always
-meant to be.
+**Which columns say "you may edit this".** Checked in both directions: every
+column that should say it does, and no column that should not does. The second
+direction is the one worth having — a field that quietly became editable looks
+exactly like a field that was always meant to be. The two templates say it
+differently, and the difference matters:
+
+- **Program selection** paints the six editable columns yellow (`FFFFFF99`) as
+  an ordinary cell fill, and A1 says so in as many words.
+- **Overrides** has no yellow cell anywhere. Every header cell instead carries a
+  conditional format — `endsWith "*"` → paint `FFFFFF00` — so the yellow is
+  *computed from the header text*. `Edison Treaty Premium *` is editable;
+  `MetaRisk Treaty Premium` is not.
+
+That makes the `*` and the colour one contract rather than two, so checking the
+set of starred columns checks what a reader actually sees. The rules themselves
+are checked separately, because dropping them would leave every `*` in place
+while nothing was yellow any more: the sheet would still list its editable
+columns and silently stop showing them.
 
 **Columns the sheet computes.** `Edison Client Level GeoScope differs from
 Property COE GeoScope` is a Yes/No the overrides sheet works out from two of its
@@ -193,8 +206,8 @@ npm run check:templates -- <folder>
 A comparison that reports nothing is either a clean template or a broken check,
 and the two read identically. This plants one defect at a time in a throwaway
 copy of each real case — changes a value, drops a row, repaints a fill, strips a
-marker, half-writes a block, adds a column nobody checks — and confirms the run
-notices. Faults that do not apply to a case are skipped rather than counted as
+marker, drops the rule that paints the yellow, half-writes a block, adds a
+column nobody checks — and confirms the run notices. Faults that do not apply to a case are skipped rather than counted as
 passes, and the case itself is never written to.
 
 Nothing in it knows a column name. Every fault is built from the descriptor and
@@ -223,6 +236,7 @@ export default {
   ],
   fills: { editable: { argb: 'FFFFFF99', columns: [/* ... */] } },
   markers: { suffix: ' *', columns: [/* ... */] },
+  conditionalFills: { editable: { argb: 'FFFFFF00', type: 'endsWith', text: '*' } },
   derived: [{ column, from: [a, b], value: (x, y) => /* ... */ }],
   blocks: { 'name': { lead: 'divider column', columns: [/* ... */] } },
   unverifiable: { 'the reason': [/* column names */] },

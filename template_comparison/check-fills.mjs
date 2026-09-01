@@ -146,6 +146,97 @@ export function checkMarkers(ws, markers, headerRow) {
   return { ok: findings.length === 0, checked: want.size, findings };
 }
 
+/** "B4" -> { col: 2, row: 4 } */
+function addr(a) {
+  const m = /^\$?([A-Z]+)\$?(\d+)$/.exec(a);
+  if (!m) return null;
+  let col = 0;
+  for (const ch of m[1]) col = col * 26 + (ch.charCodeAt(0) - 64);
+  return { col, row: Number(m[2]) };
+}
+
+/** Whether a conditional-format ref ("B4", "B4:D9", or several space-separated) covers a cell. */
+function covers(ref, col, row) {
+  for (const part of String(ref ?? '').split(/\s+/)) {
+    const [a, b] = part.split(':');
+    const from = addr(a);
+    if (!from) continue;
+    const to = b ? addr(b) : from;
+    if (!to) continue;
+    if (col >= Math.min(from.col, to.col) && col <= Math.max(from.col, to.col)
+      && row >= Math.min(from.row, to.row) && row <= Math.max(from.row, to.row)) return true;
+  }
+  return false;
+}
+
+/**
+ * Checks the colour a template paints by rule rather than by hand.
+ *
+ * The overrides sheet has no yellow cells at all. It has a conditional format
+ * on every header cell -- `endsWith "*"` -> fill FFFFFF00 -- so the yellow is
+ * COMPUTED from the header text. That makes the marker and the colour one
+ * contract rather than two, which is why the " *" check covers what a reader
+ * sees.
+ *
+ * It leaves one gap, and this closes it: drop the rules and every " *" is still
+ * in place while nothing is yellow any more. The marker check would pass and
+ * the sheet would silently stop telling anyone which fields they may edit.
+ *
+ * @param ws        the worksheet
+ * @param spec      { argb, type, text, row } -- the rule every column must carry
+ * @param headerRow 1-based row holding the column names
+ */
+export function checkConditionalFills(ws, groups, headerRow) {
+  const findings = [];
+  let checked = 0;
+
+  const formats = ws.conditionalFormattings ?? [];
+
+  for (const [group, spec] of Object.entries(groups)) {
+    const { argb, type, text, row = 'header' } = spec;
+    const at = row === 'header' ? headerRow : headerRow + 1;
+
+    const columns = [];
+    ws.getRow(headerRow).eachCell({ includeEmpty: false }, (c, n) => {
+      if (String(c.value ?? '').trim()) columns.push({ name: String(c.value).trim(), n });
+    });
+
+    for (const { name, n } of columns) {
+      checked++;
+      const rules = formats
+        .filter((f) => covers(f.ref, n, at))
+        .flatMap((f) => f.rules ?? []);
+
+      const match = rules.find((r) => {
+        if (type && r.type !== type) return false;
+        // The rule's `text` attribute is dropped on read, so the text is looked
+        // for in the formula it keeps: endsWith "*" arrives as
+        // RIGHT(B4,LEN("*"))="*", which states the same thing twice.
+        if (text !== undefined) {
+          const quoted = `"${text}"`;
+          const said = r.text === text || (r.formulae ?? []).some((f) => String(f).includes(quoted));
+          if (!said) return false;
+        }
+        const fill = r.style?.fill;
+        const got = fill?.bgColor?.argb ?? fill?.fgColor?.argb ?? null;
+        return got === argb;
+      });
+
+      if (!match) {
+        findings.push({
+          group,
+          column: name,
+          problem: rules.length
+            ? `carries ${rules.length} rule(s), none painting ${argb} on ${type ?? 'any'} "${text ?? ''}"`
+            : 'carries no conditional format, so it can never be painted',
+        });
+      }
+    }
+  }
+
+  return { ok: findings.length === 0, checked, findings };
+}
+
 /** One line per finding, for a run log. */
 export function formatFindings(findings) {
   return findings.map(

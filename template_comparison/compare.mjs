@@ -9,7 +9,7 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import ExcelJS from 'exceljs';
-import { checkFills, checkMarkers } from './check-fills.mjs';
+import { checkFills, checkMarkers, checkConditionalFills } from './check-fills.mjs';
 import { collapse } from './values.mjs';
 
 /** A column is a name, or a name with its own idea of what agreement means. */
@@ -365,15 +365,20 @@ export async function compareCase(caseDir, descriptor) {
   const markers = spec.markers
     ? checkMarkers(ws, spec.markers, spec.headerRow)
     : { ok: true, checked: 0, findings: [] };
+  const painted = spec.conditionalFills
+    ? checkConditionalFills(ws, spec.conditionalFills, spec.headerRow)
+    : { ok: true, checked: 0, findings: [] };
   const derived = checkDerived(ws, spec);
   const blocks = checkBlocks(ws, spec);
   const coverage = checkCoverage(ws, spec, used);
 
   const failed = results.reduce((n, r) => n + (r.findings?.length ?? 0), 0)
-    + fills.findings.length + markers.findings.length + derived.findings.length
-    + blocks.findings.length + coverage.unchecked.length + coverage.shadowed.length;
+    + fills.findings.length + markers.findings.length + painted.findings.length
+    + derived.findings.length + blocks.findings.length
+    + coverage.unchecked.length + coverage.shadowed.length;
 
   return {
-    file, sheet: ws.name, results, fills, markers, derived, blocks, coverage, ok: failed === 0,
+    file, sheet: ws.name, results, fills, markers, painted, derived, blocks, coverage,
+    ok: failed === 0,
   };
 }
