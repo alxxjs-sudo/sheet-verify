@@ -17,7 +17,7 @@ const show = (v) => {
 export function report(kind, name, outcome) {
   const lines = [];
   const md = [];
-  const { coverage, derived, markers, fills, blocks, painted } = outcome;
+  const { coverage, derived, markers, fills, blocks, painted, validations } = outcome;
 
   md.push(`# ${kind} · ${name}`, '');
   md.push(`Template: \`${outcome.file}\`, sheet \`${outcome.sheet}\``, '');
@@ -25,6 +25,7 @@ export function report(kind, name, outcome) {
   const total = outcome.results.reduce((t, r) => t + (r.findings?.length ?? 0), 0)
     + fills.findings.length + (markers?.findings.length ?? 0) + (painted?.findings.length ?? 0)
     + (derived?.findings.length ?? 0) + (blocks?.findings.length ?? 0)
+    + (validations?.findings.length ?? 0)
     + (coverage?.unchecked.length ?? 0) + (coverage?.shadowed.length ?? 0);
 
   lines.push(`${outcome.ok ? '✓' : '✗'} ${kind} · ${name}`);
@@ -187,6 +188,25 @@ export function report(kind, name, outcome) {
       lines.push(`    markers ${n(markers.findings.length)} problem(s)`);
       md.push('| Column | Problem |', '| --- | --- |');
       for (const f of markers.findings) md.push(`| ${f.column} | ${f.problem} |`);
+      md.push('');
+    }
+  }
+
+  if (validations && (validations.checked || validations.custom || validations.findings.length)) {
+    md.push('## The rules the sheet carries about itself', '');
+    md.push(
+      `${n(validations.checked)} value(s) checked against the data validation beside them`
+      + (validations.custom ? `; ${n(validations.custom)} custom rule(s) left unevaluated.` : '.'),
+      '',
+    );
+    if (validations.ok) {
+      md.push('Every value the template wrote satisfies the rule it wrote beside it.', '');
+    } else {
+      lines.push(`    validations ${n(validations.findings.length)} problem(s)`);
+      md.push('| Cell | Column | Value | Problem |', '| --- | --- | --- | --- |');
+      for (const f of validations.findings) {
+        md.push(`| ${f.address} | ${f.column} | ${f.value === undefined ? '—' : show(f.value)} | ${f.problem} |`);
+      }
       md.push('');
     }
   }

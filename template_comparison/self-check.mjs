@@ -59,11 +59,17 @@ function headers(ws, headerRow) {
  * `plant` returns a label when it applies and null when it does not -- a
  * template with no derived columns cannot lose one, and pretending otherwise
  * would turn an inapplicable case into a passing one.
+ *
+ * `count` measures the area the fault belongs to, and a fault counts as noticed
+ * when it makes that number go up. Judged against the case's own baseline
+ * rather than against zero, so a case that already has a real finding -- as the
+ * program selection templates do, their own data validations rejecting their
+ * own values -- can still be used to check that the other checks work.
  */
 const FAULTS = [
   {
     name: 'a value is changed',
-    expect: (o) => o.results.some((r) => r.findings?.some((f) => f.column)),
+    count: (o) => o.results.reduce((t, r) => t + (r.findings ?? []).filter((f) => f.column).length, 0),
     plant(ws, spec, checked) {
       const first = checked.find((c) => at(ws, spec).has(c));
       if (!first) return null;
@@ -75,7 +81,8 @@ const FAULTS = [
   },
   {
     name: 'a row is dropped',
-    expect: (o) => o.results.some((r) => r.findings?.some((f) => /row missing/.test(f.problem ?? ''))),
+    count: (o) => o.results.reduce(
+      (t, r) => t + (r.findings ?? []).filter((f) => /row missing/.test(f.problem ?? '')).length, 0),
     plant(ws, spec) {
       ws.spliceRows(spec.headerRow + 1, 1);
       return 'first data row removed';
@@ -83,7 +90,7 @@ const FAULTS = [
   },
   {
     name: 'an editable column loses its fill',
-    expect: (o) => !o.fills.ok,
+    count: (o) => o.fills.findings.length,
     plant(ws, spec) {
       const group = Object.values(spec.fills ?? {}).find((g) => g.columns?.length);
       if (!group) return null;
@@ -98,7 +105,7 @@ const FAULTS = [
   },
   {
     name: 'an editable column loses its marker',
-    expect: (o) => !o.markers.ok,
+    count: (o) => o.markers.findings.length,
     plant(ws, spec) {
       if (!spec.markers) return null;
       const { suffix, columns } = spec.markers;
@@ -110,7 +117,7 @@ const FAULTS = [
   },
   {
     name: 'a column the sheet computes is wrong',
-    expect: (o) => !o.derived.ok,
+    count: (o) => o.derived.findings.length,
     plant(ws, spec) {
       const rule = (spec.derived ?? []).find((d) => at(ws, spec).has(d.column));
       if (!rule) return null;
@@ -121,7 +128,7 @@ const FAULTS = [
   },
   {
     name: 'an optional block arrives half-written',
-    expect: (o) => !o.blocks.ok,
+    count: (o) => o.blocks.findings.length,
     plant(ws, spec) {
       for (const block of Object.values(spec.blocks ?? {})) {
         if (!at(ws, spec).has(block.lead)) continue;
@@ -135,7 +142,7 @@ const FAULTS = [
   },
   {
     name: 'the rule that paints editable columns is dropped',
-    expect: (o) => !o.painted.ok,
+    count: (o) => o.painted.findings.length,
     plant(ws, spec) {
       if (!spec.conditionalFills || !ws.conditionalFormattings?.length) return null;
       const gone = ws.conditionalFormattings.length;
@@ -144,8 +151,25 @@ const FAULTS = [
     },
   },
   {
+    name: "a value stops satisfying the sheet's own rule",
+    count: (o) => o.validations.findings.length,
+    plant(ws, spec) {
+      const cols = at(ws, spec);
+      for (const row of [spec.headerRow + 1, spec.headerRow + 2]) {
+        for (const [, n] of cols) {
+          const cell = ws.getRow(row).getCell(n);
+          const dv = cell.dataValidation;
+          if (!dv || dv.type === 'custom') continue;
+          cell.value = dv.type === 'list' ? 'Perhaps' : -999999;
+          return `${cell.address} set to something its ${dv.type} rule rejects`;
+        }
+      }
+      return null;
+    },
+  },
+  {
     name: 'a column nobody checks appears',
-    expect: (o) => o.coverage.unchecked.length > 0,
+    count: (o) => o.coverage.unchecked.length,
     plant(ws, spec) {
       ws.getRow(spec.headerRow).getCell(ws.columnCount + 2).value = 'Planted Unchecked Column';
       return 'one new header written past the last column';
@@ -164,8 +188,6 @@ async function checkCase(kind, name, caseDir, descriptor) {
   // lands somewhere a check is looking rather than somewhere it is not.
   const base = await compareCase(caseDir, descriptor);
   const checked = base.results.flatMap((r) => r.names ?? []);
-
-  if (!base.ok) return { skipped: 'the case does not pass to begin with' };
 
   const results = [];
   for (const fault of FAULTS) {
@@ -191,7 +213,12 @@ async function checkCase(kind, name, caseDir, descriptor) {
         results.push({ fault: fault.name, applies: true, caught: true, note });
         continue;
       }
-      results.push({ fault: fault.name, applies: true, caught: !outcome.ok && fault.expect(outcome), note });
+      const before = fault.count(base);
+      const after = fault.count(outcome);
+      results.push({
+        fault: fault.name, applies: true, caught: after > before, note,
+        detail: after > before ? undefined : `area went ${before} -> ${after}`,
+      });
     } finally {
       await rm(work, { recursive: true, force: true });
     }
@@ -234,7 +261,7 @@ for (const { kind, dir } of kinds) {
     console.log(`${bad.length ? '✗' : '✓'} ${kind} · ${name}`);
     for (const r of results) {
       if (!r.applies) console.log(`      –  ${r.fault} (does not apply here)`);
-      else console.log(`      ${r.caught ? '✓' : '✗'}  ${r.fault} — ${r.note}`);
+      else console.log(`      ${r.caught ? '✓' : '✗'}  ${r.fault} — ${r.note}${r.detail ? ` [${r.detail}]` : ''}`);
     }
   }
 }

@@ -119,6 +119,28 @@ Property COE GeoScope` is a Yes/No the overrides sheet works out from two of its
 own columns. No source carries it, so this is the only check it will ever get,
 and getting it wrong tells a user a field was left alone when it was changed.
 
+**The rules the sheet carries about itself.** These templates ship data
+validations — `Include` is `Yes` or `No`, `Treaty Participation` is a decimal
+between 0 and 1, `Treaty Premium` is at least 0. They are a contract with
+whoever edits the file, since Excel refuses anything else on the way back in, so
+a wrong rule breaks the upload half of the round trip while the download looks
+perfect.
+
+Two things are checked, and neither needs a source of any kind — the template
+states both sides of the argument itself:
+
+1. **Every value the template wrote satisfies the rule it wrote beside it.** A
+   sheet shipping a figure its own rule rejects is a sheet nobody can edit at
+   that cell.
+2. **A rule written per row refers to its own row.** A formula copied down
+   without being advanced validates somebody else's cell, and passes for as long
+   as the two happen to agree.
+
+`custom` rules are reported as unevaluated rather than assumed good; this is not
+an Excel formula engine, and claiming to have checked something that was skipped
+is the failure this whole tool exists to avoid. Their row references are still
+checked, which is what (2) is for.
+
 **Optional blocks, all or nothing.** See below.
 
 **That the capture and the template belong together.** Both captures state what
@@ -206,8 +228,12 @@ npm run check:templates -- <folder>
 A comparison that reports nothing is either a clean template or a broken check,
 and the two read identically. This plants one defect at a time in a throwaway
 copy of each real case — changes a value, drops a row, repaints a fill, strips a
-marker, drops the rule that paints the yellow, half-writes a block, adds a
-column nobody checks — and confirms the run notices. Faults that do not apply to a case are skipped rather than counted as
+marker, drops the rule that paints the yellow, half-writes a block, breaks a
+data validation, adds a column nobody checks — and confirms the run notices.
+
+Each fault is judged against **the case's own baseline**, not against zero: a
+case that already carries a real finding can still be used to check that the
+other checks work. Faults that do not apply to a case are skipped rather than counted as
 passes, and the case itself is never written to.
 
 Nothing in it knows a column name. Every fault is built from the descriptor and

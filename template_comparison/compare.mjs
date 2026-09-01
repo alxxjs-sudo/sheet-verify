@@ -10,6 +10,7 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import ExcelJS from 'exceljs';
 import { checkFills, checkMarkers, checkConditionalFills } from './check-fills.mjs';
+import { checkValidations } from './check-validations.mjs';
 import { collapse } from './values.mjs';
 
 /** A column is a name, or a name with its own idea of what agreement means. */
@@ -370,15 +371,21 @@ export async function compareCase(caseDir, descriptor) {
     : { ok: true, checked: 0, findings: [] };
   const derived = checkDerived(ws, spec);
   const blocks = checkBlocks(ws, spec);
+
+  // The rules the sheet carries about itself, checked against the values the
+  // sheet wrote. Needs no source and no configuration -- both sides of the
+  // argument are in the file.
+  const shape = reader(ws, spec.headerRow, spec.rowMarker);
+  const validations = checkValidations(ws, shape.rows, shape.columns);
   const coverage = checkCoverage(ws, spec, used);
 
   const failed = results.reduce((n, r) => n + (r.findings?.length ?? 0), 0)
     + fills.findings.length + markers.findings.length + painted.findings.length
-    + derived.findings.length + blocks.findings.length
+    + derived.findings.length + blocks.findings.length + validations.findings.length
     + coverage.unchecked.length + coverage.shadowed.length;
 
   return {
-    file, sheet: ws.name, results, fills, markers, painted, derived, blocks, coverage,
-    ok: failed === 0,
+    file, sheet: ws.name, results, fills, markers, painted, derived, blocks, validations,
+    coverage, ok: failed === 0,
   };
 }
