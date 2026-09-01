@@ -308,6 +308,27 @@ not on company plus treaty name, which collides: one company can carry the same
 treaty name in several programs, which it did on 12 of those 68 rows. Overrides
 pair on `GCMP Layer ID` or `MetaRisk Treaty ID`, the ids the request asked for.
 
+## Standing findings
+
+As of 2026-09-01, four of the ten captured cases fail, and they fail on the
+template rather than on the tool. A red run here is expected until the
+generator is fixed.
+
+The program selection template writes its data validations correctly for the
+first two treaty rows and wrongly for every row after them:
+
+| column | rows 4-5 | rows 6+ |
+| --- | --- | --- |
+| `Treaty Aggregate Limit` | a rule referring to its own row | a copy of **row 5's** rule, referring to `Q5` |
+| `Treaty Participating Limit` | the same rule as `Q`, itself the wrong column | `decimal between 0 and 1`, holding 1,000,000 to 6,000,000 |
+
+So any template with three or more treaties ships broken validations from row 6
+down, which is the half of the round trip Excel enforces on upload.
+`us_cat_only_program` passes only because it has a single row.
+
+Blessing does not silence this and is not meant to: it is a standing defect, not
+drift, and the golden comparison has nothing to say about it.
+
 ## Checking the checks
 
 ```bash
