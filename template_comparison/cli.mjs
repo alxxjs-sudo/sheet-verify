@@ -32,13 +32,17 @@
 import { readdir, mkdir, writeFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { compareCase } from './compare.mjs';
 import { report } from './report.mjs';
 
 const args = process.argv.slice(2);
 const CLEAN = args.includes('--clean');
 const ROOT = args.find((a) => !a.startsWith('-')) ?? 'comparison/templates';
-const HERE = new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+// fileURLToPath and not `.pathname`, which is percent-encoded: a checkout under
+// a folder named "OneDrive - MMC" gave a HERE of "OneDrive%20-%20MMC", so no
+// descriptor was ever found and every kind was reported as one nobody wrote.
+const HERE = fileURLToPath(new URL('.', import.meta.url));
 
 const dirs = async (p) =>
   (await readdir(p, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name);
@@ -113,6 +117,7 @@ if (unknown.length) {
   console.log('');
   console.log(`${unknown.length} template folder(s) with no descriptor under templates/:`);
   for (const u of unknown) console.log(`  ${u}`);
+  console.log(`  (expected one of: ${(await dirs(join(HERE, 'templates'))).join(', ')})`);
 }
 
 console.log('');
@@ -121,4 +126,9 @@ if (CLEAN) {
   process.exit(0);
 }
 console.log(`${cases} case(s), ${failing} failing`);
+
+// A run that recognised nothing printed "0 case(s), 0 failing" and exited 0,
+// which is the same thing a clean run says. Anything unrecognised, and anything
+// at all that ran nothing, is a failed run.
+if (unknown.length || cases === 0) process.exit(1);
 process.exit(failing ? 1 : 0);
