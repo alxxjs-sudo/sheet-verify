@@ -247,6 +247,7 @@ question:
 | work out *which* correction a report needs, and fix a mis-detected table | **[docs/detection-tuning.md](docs/detection-tuning.md)** |
 | read `report.md`, the ledgers, and the verdict | **[docs/reading-a-report.md](docs/reading-a-report.md)** |
 | call it from a test suite or from code | **[docs/api.md](docs/api.md)** |
+| verify a template the app hands out to be edited and uploaded back | **[docs/template-comparison.md](docs/template-comparison.md)** |
 
 The four commands worth knowing now:
 

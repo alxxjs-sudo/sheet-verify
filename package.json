@@ -22,6 +22,7 @@
     "check": "npm run typecheck && npm run links && npm test",
     "precompare": "npm run build",
     "compare": "node dist/cli.js",
+    "compare:templates": "node template_comparison/cli.mjs",
     "prerecalc": "npm run build",
     "recalc": "node dist/cli.js --recalc",
     "presummary": "npm run build",
@@ -40,6 +41,7 @@
     "fidelity": "node dist/fidelity-cli.js",
     "clean": "node scripts/clean-results.mjs",
     "clean:dry": "node scripts/clean-results.mjs --dry",
+    "clean:templates": "node template_comparison/cli.mjs --clean",
     "links": "node scripts/check-links.mjs",
     "example": "node --experimental-strip-types examples/run-cases.ts",
     "example:case-json": "node --experimental-strip-types examples/case-json-demo.ts"
