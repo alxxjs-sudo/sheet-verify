@@ -119,6 +119,9 @@ Property COE GeoScope` is a Yes/No the overrides sheet works out from two of its
 own columns. No source carries it, so this is the only check it will ever get,
 and getting it wrong tells a user a field was left alone when it was changed.
 
+The same idea reaches eight columns of the ROLePlay block, which no capture can
+speak for — see below.
+
 **The rules the sheet carries about itself.** These templates ship data
 validations — `Include` is `Yes` or `No`, `Treaty Participation` is a decimal
 between 0 and 1, `Treaty Premium` is at least 0. They are a contract with
@@ -157,10 +160,23 @@ include ROLePlay data in the template for advanced filtration?"* — and the
 answer decides whether the sheet is 31 columns or 176. The extra 145 are a
 divider, `ROLePlay Data ->`, and the 144 modelling columns behind it.
 
-Because it is a choice rather than a property of the data, it is checkable as a
-binary: the block arrives **whole or not at all**. Half a block is a template
-that lost columns on the way out, and it would otherwise pass, since every
-column that did arrive is correct. The divider decides which case a sheet is in.
+**The answer is recorded in the request**, as `includeRoleplayData`, so the
+request is the authority on whether the block belongs:
+
+| `includeRoleplayData` | the template must |
+| --- | --- |
+| `true` | carry the divider and all 144 columns |
+| `false` | carry none of them |
+
+Letting the sheet decide for itself only proves it agrees with itself. A
+download that was asked for ROLePlay data and came back with none of it is
+perfectly self-consistent — no divider, no block — and is exactly the bug worth
+catching.
+
+Given that it is a choice, it is also checkable as a binary: the block arrives
+**whole or not at all**. Half a block is a template that lost columns on the way
+out, and it would otherwise pass, since every column that did arrive is
+correct.
 
 Those 144 columns are **declared unverifiable**, with the reason recorded in the
 report:
@@ -168,11 +184,49 @@ report:
 > modelling output the server joins in; in neither capture
 
 That is measured, not assumed. Of the 144, 68 hold a value that appears nowhere
-in `payload_data.json` or `table_data.json` — the server joins them in when it
-builds the workbook. Verifying them needs the download *response* captured,
-which nothing does yet. They are listed by name rather than as "everything after
-the divider", so a column added to the block in a future release is reported as
-unchecked instead of being quietly excused by a rule.
+in `payload_data.json` or `table_data.json`. They are listed by name rather than
+as "everything after the divider", so a column added to the block in a future
+release is reported as unchecked instead of being quietly excused by a rule.
+
+**There is no capture that would fix this.** The download flow is a POST to
+`report-creation-treaties-template`, which answers with a job ticket —
+`{topic, downloadName, status, id}` — then a poll on `status`, then a `GET` of
+`result`, which is the `.xlsx` itself. No JSON in the browser carries these
+figures; the server computes them and writes them straight into the workbook.
+The template cannot verify itself, so this is a genuine limit rather than a
+missing capture.
+
+### What can be checked without a source
+
+Eight of the 144 are arithmetic on the columns beside them — standard
+reinsurance identities, holding exactly on all three captured ROLePlay
+templates (17 rows, worst relative gap `3.93e-16`, which is IEEE754 rounding
+and nothing else). They are checked, and reported in two groups, because the
+two are not the same claim:
+
+| | rule |
+| --- | --- |
+| **anchored** | `Limit` = `Treaty Occurrence Limit` |
+| | `Modeled Deposit Premium @ 100% Placed` = `Treaty Premium` |
+| | `Modeled ROL` = `Treaty Premium` ÷ `Treaty Occurrence Limit` |
+| **consistency only** | `LOL` = `Expected Loss @ 100% Placed` ÷ `Treaty Occurrence Limit` |
+| | `Loss Ratio` = `Expected Loss @ 100% Placed` ÷ `Treaty Premium` |
+| | `CV` = `Standard Deviation @ 100% Placed` ÷ `Expected Loss @ 100% Placed` |
+| | `Modeled Expected Premium` = `Modeled Deposit Premium` + `Modeled Reinstatement Premium` |
+| | `GCMP Deposit Premium @ 100% Placed` = `GCMP USD Rate` × `Treaty GCMP Premium` |
+
+The **anchored** three trace every input back to a column verified against the
+payload, so the result is verified too. The **consistency** five tie unverified
+figures together without pinning any down: three equations in four unknowns says
+nothing about whether `Expected Loss` is right, only that if it is wrong then
+`LOL`, `Loss Ratio` and `CV` are wrong in exactly the matching way. Worth
+having, and not verification — reporting it as such would be the overstatement
+this tool exists to avoid.
+
+That takes coverage on a ROLePlay template from 31 of 175 columns to 39. Each
+rule is skipped when its columns are absent, and a skipped rule leaves its
+column counted as **unchecked** rather than taking the rule's word for a check
+that never ran.
 
 `Edison Program Name` appears twice in the 176-column sheet, at E3 and again at
 AI3, because the block repeats the identity columns it is keyed on. Lookup is by

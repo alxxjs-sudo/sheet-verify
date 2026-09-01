@@ -162,6 +162,17 @@ export function report(kind, name, outcome) {
     md.push('## Columns the sheet computes', '');
     if (derived.ok) {
       md.push(`${n(derived.checked)} value(s) checked; each is what the row's own columns imply.`, '');
+      // Anchored and merely-consistent are both real checks and are not the
+      // same claim. A rule tying four unverified figures together says they
+      // agree, not that any of them is right.
+      if (derived.consistency) {
+        md.push(
+          `${n(derived.anchored)} column(s) computed from values verified against a source, so `
+          + `the result is verified too; ${n(derived.consistency)} tie unverified figures to each `
+          + 'other, which catches one moving without the others but does not pin any of them down.',
+          '',
+        );
+      }
     } else {
       lines.push(`    derived ${n(derived.findings.length)} problem(s)`);
       md.push('| Row | Column | Template | Should be |', '| --- | --- | --- | --- |');

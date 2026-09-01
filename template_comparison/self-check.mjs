@@ -151,6 +151,24 @@ const FAULTS = [
     },
   },
   {
+    // The one the old check could not see: strip the block entirely and the
+    // sheet is perfectly self-consistent -- no divider, no columns. Only the
+    // request knows it was asked for.
+    name: 'a block that was asked for is missing altogether',
+    count: (o) => o.blocks.findings.length,
+    plant(ws, spec) {
+      for (const block of Object.values(spec.blocks ?? {})) {
+        if (!block.requested || !at(ws, spec).has(block.lead)) continue;
+        const cols = at(ws, spec);
+        for (const name of [block.lead, ...block.columns]) {
+          if (cols.has(name)) ws.getRow(spec.headerRow).getCell(cols.get(name)).value = null;
+        }
+        return 'the whole block removed, divider included';
+      }
+      return null;
+    },
+  },
+  {
     name: "a value stops satisfying the sheet's own rule",
     count: (o) => o.validations.findings.length,
     plant(ws, spec) {

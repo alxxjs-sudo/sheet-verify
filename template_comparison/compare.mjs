@@ -182,31 +182,43 @@ export function compareSource(ws, spec, source, data) {
  * a field was left alone when it was changed.
  */
 export function checkDerived(ws, spec) {
-  if (!spec.derived?.length) return { ok: true, checked: 0, findings: [] };
+  const empty = { ok: true, checked: 0, findings: [], columns: new Set(), anchored: 0, consistency: 0 };
+  if (!spec.derived?.length) return empty;
   const { value, rows, columns } = reader(ws, spec.headerRow, spec.rowMarker);
   const findings = [];
+  const evaluated = new Set();
   let checked = 0;
+  let anchored = 0;
+  let consistency = 0;
 
   for (const rule of spec.derived) {
-    if (!columns.has(rule.column)) {
-      findings.push({ column: rule.column, problem: 'column not found in the template' });
-      continue;
-    }
-    const absent = rule.from.filter((n) => !columns.has(n));
+    const absent = [rule.column, ...rule.from].filter((n) => !columns.has(n));
     if (absent.length) {
-      findings.push({ column: rule.column, problem: `needs ${absent.join(' and ')}, not in this sheet` });
+      // A rule can belong to a block that this download did not include. Those
+      // are skipped rather than reported -- and the column is left OUT of the
+      // evaluated set, so coverage counts it as unchecked rather than taking
+      // the rule's word for a check that never ran.
+      if (rule.optional) continue;
+      findings.push({
+        column: rule.column,
+        problem: absent[0] === rule.column
+          ? 'column not found in the template'
+          : `needs ${absent.join(' and ')}, not in this sheet`,
+      });
       continue;
     }
+
+    evaluated.add(rule.column);
+    if (rule.anchored === false) consistency++; else anchored++;
+
     for (const r of rows) {
       checked++;
       const want = rule.value(...rule.from.map((n) => value(r, n)));
       const got = value(r, rule.column);
-      if (String(got ?? '').trim() !== String(want ?? '').trim()) {
-        findings.push({ row: r, column: rule.column, template: got, expected: want });
-      }
+      if (!same(got, want)) findings.push({ row: r, column: rule.column, template: got, expected: want });
     }
   }
-  return { ok: findings.length === 0, checked, findings };
+  return { ok: findings.length === 0, checked, findings, columns: evaluated, anchored, consistency };
 }
 
 /**
@@ -219,7 +231,7 @@ export function checkDerived(ws, spec) {
  * or none of it. Half a block is a template that lost columns on the way out,
  * and it would otherwise pass -- the columns it kept are all correct.
  */
-export function checkBlocks(ws, spec) {
+export function checkBlocks(ws, spec, captured = new Map()) {
   const blocks = Object.entries(spec.blocks ?? {});
   if (!blocks.length) return { ok: true, present: [], findings: [] };
   const { columns } = reader(ws, spec.headerRow, spec.rowMarker);
@@ -233,6 +245,36 @@ export function checkBlocks(ws, spec) {
 
   for (const [name, block] of blocks) {
     const included = columns.has(block.lead);
+
+    // What the request asked for, when the request says. The sheet deciding
+    // for itself only proves it is self-consistent: a download that was asked
+    // for this block and returned none of it is internally tidy and completely
+    // wrong, and nothing here would have said so.
+    if (block.requested) {
+      const data = captured.get(block.requested.file);
+      if (data === undefined) {
+        findings.push({
+          block: name,
+          problem: `cannot tell whether it was asked for -- no ${block.requested.file}`,
+          missing: [],
+        });
+      } else {
+        const asked = block.requested.value(data);
+        if (asked === true && !included) {
+          findings.push({
+            block: name,
+            problem: `was asked for, and the template does not have it -- "${block.lead}" is absent`,
+            missing: [block.lead],
+          });
+        } else if (asked === false && included) {
+          findings.push({
+            block: name,
+            problem: 'was NOT asked for, and the template has it anyway',
+            missing: [],
+          });
+        }
+      }
+    }
 
     if (!included) {
       // Nothing of the block should have come through on its own. Names it
@@ -273,11 +315,11 @@ export function checkBlocks(ws, spec) {
  * unchecked is a finding, so a column added to a future release is noticed the
  * first time it appears rather than the first time it is wrong.
  */
-export function checkCoverage(ws, spec, compared) {
+export function checkCoverage(ws, spec, compared, derivedColumns = new Set()) {
   const { columns, duplicates } = reader(ws, spec.headerRow, spec.rowMarker);
   const checked = new Set();
   for (const names of compared) for (const name of names) checked.add(name);
-  for (const d of spec.derived ?? []) checked.add(d.column);
+  for (const name of derivedColumns) checked.add(name);
 
   const excused = new Map();
   for (const [reason, names] of Object.entries(spec.unverifiable ?? {})) {
@@ -320,6 +362,7 @@ export async function compareCase(caseDir, descriptor) {
   const { spec, ws } = resolveVariant(wb, descriptor);
   const results = [];
   const used = [];
+  const captured = new Map();
 
   for (const source of spec.sources) {
     const path = join(caseDir, 'data', source.file);
@@ -328,6 +371,7 @@ export async function compareCase(caseDir, descriptor) {
       continue;
     }
     const data = JSON.parse(await readFile(path, 'utf8'));
+    captured.set(source.file, data);
 
     // A capture can say what it is a capture of. When it does, and it disagrees
     // with the sheet in front of us, the two were not taken from the same
@@ -370,14 +414,14 @@ export async function compareCase(caseDir, descriptor) {
     ? checkConditionalFills(ws, spec.conditionalFills, spec.headerRow)
     : { ok: true, checked: 0, findings: [] };
   const derived = checkDerived(ws, spec);
-  const blocks = checkBlocks(ws, spec);
+  const blocks = checkBlocks(ws, spec, captured);
 
   // The rules the sheet carries about itself, checked against the values the
   // sheet wrote. Needs no source and no configuration -- both sides of the
   // argument are in the file.
   const shape = reader(ws, spec.headerRow, spec.rowMarker);
   const validations = checkValidations(ws, shape.rows, shape.columns);
-  const coverage = checkCoverage(ws, spec, used);
+  const coverage = checkCoverage(ws, spec, used, derived.columns);
 
   const failed = results.reduce((n, r) => n + (r.findings?.length ?? 0), 0)
     + fills.findings.length + markers.findings.length + painted.findings.length

@@ -7,6 +7,7 @@
 import { projectRows, COLUMNS as PAYLOAD_COLUMNS } from './from-payload.mjs';
 import { projectTableRows, COLUMNS as UI_COLUMNS } from './from-ui.mjs';
 import { ROLEPLAY_BLOCK } from './roleplay-block.mjs';
+import { ARITHMETIC, COVERED_BY_ARITHMETIC } from './arithmetic.mjs';
 
 export default {
   sheet: 'Treaties',
@@ -88,6 +89,15 @@ export default {
     'ROLePlay data': {
       lead: 'ROLePlay Data ->',
       columns: ROLEPLAY_BLOCK,
+      // The prompt's answer is recorded in the request, so the request is the
+      // authority on whether the block belongs. Letting the divider decide only
+      // proves the sheet agrees with itself: a download asked for ROLePlay data
+      // that came back with none of it is perfectly self-consistent and exactly
+      // the bug worth catching.
+      requested: {
+        file: 'payload_data.json',
+        value: (data) => data.includeRoleplayData === true,
+      },
     },
   },
 
@@ -98,8 +108,16 @@ export default {
    * neither checked nor listed here fails the case -- the whole point being
    * that "nobody looked" must never print the same as "it agreed".
    */
+  /**
+   * ROLePlay columns that are arithmetic on their neighbours. No capture
+   * carries these figures, but the sheet computes some of them from columns
+   * that ARE verified, and ties the rest to each other.
+   */
+  derived: ARITHMETIC,
+
   unverifiable: {
-    'modelling output the server joins in; in neither capture': ROLEPLAY_BLOCK,
+    'modelling output the server joins in; in neither capture':
+      ROLEPLAY_BLOCK.filter((c) => !COVERED_BY_ARITHMETIC.includes(c)),
     'a divider label rather than data -- its fill is checked instead': ['ROLePlay Data ->'],
   },
 
