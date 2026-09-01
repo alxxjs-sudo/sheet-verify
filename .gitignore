@@ -43,9 +43,8 @@ others/
 # Check these with `git check-ignore -v <dir>` and NOT a trailing slash. With
 # one, git reports a match against a blank line in this file and exits 0, which
 # reads as "ignored" and is not. `git status` is the honest answer.
+comparison/
 template_comp_data/
 template-comp-data/
 basic_template_comparison/
 basic-template-comparison/
-template_comparison/
-template-comparison/
