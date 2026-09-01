@@ -95,6 +95,18 @@ export function report(kind, name, outcome) {
         + `${n(baseline.columns)} column(s), plus the header fills and the rules attached to them.`,
         '',
       );
+      if (baseline.parts) {
+        md.push(
+          `The two files are also compared as archives: ${n(baseline.parts.compared)} of `
+          + `${n(baseline.parts.total)} XML part(s), byte for byte. That needs no spreadsheet `
+          + 'model, so drawings, merged cells, column widths, defined names, protection and '
+          + 'print setup cannot drift unnoticed even though no check here understands them.',
+          '',
+        );
+        if (baseline.parts.producer) {
+          md.push(`Written by \`${baseline.parts.producer}\`.`, '');
+        }
+      }
       // Said plainly, because the two claims are easy to conflate and only one
       // of them is about correctness.
       md.push(

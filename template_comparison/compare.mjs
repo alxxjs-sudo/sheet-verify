@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import ExcelJS from 'exceljs';
 import { checkFills, checkMarkers, checkConditionalFills } from './check-fills.mjs';
 import { checkBaseline } from './check-baseline.mjs';
+import { checkParts } from './check-parts.mjs';
 import { checkValidations } from './check-validations.mjs';
 import { collapse } from './values.mjs';
 
@@ -450,6 +451,19 @@ export async function compareCase(caseDir, descriptor) {
     const g = await openTemplate(where.golden);
     const golden = resolveVariant(g.wb, descriptor).ws;
     baseline = checkBaseline(ws, golden, spec, spec.sources[0].key);
+
+    // And the same two files as archives. The check above reads them through a
+    // spreadsheet model, which only sees what it was built to see; this one
+    // needs no model and so cannot miss anything.
+    baseline.parts = await checkParts(
+      join(where.current, file),
+      join(where.golden, g.file),
+      descriptor.volatileParts ?? [],
+    );
+    baseline.findings.push(...baseline.parts.findings.map((f) => ({
+      kind: 'part', what: f.part, problem: f.problem, golden: f.golden, current: f.current,
+    })));
+    baseline.ok = baseline.findings.length === 0;
   } else if (where.golden) {
     baseline = { missing: true, ok: true, columns: 0, rows: 0, compared: 0, findings: [] };
   }

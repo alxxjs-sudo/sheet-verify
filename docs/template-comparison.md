@@ -158,6 +158,19 @@ can speak for. Values are paired by the same business key, never by position,
 and the header fills and data validations are compared too, so a contract the
 descriptor never knew about still cannot drift quietly.
 
+The same two files are also compared **as archives** — every XML part inside the
+`.xlsx`, byte for byte. That needs no spreadsheet model, and a model only sees
+what it was built to see: drawings, charts, merged cells, column widths, defined
+names, sheet protection, themes and print setup all live in those parts and are
+invisible to every other check here. The archive comparison cannot say what
+changed in a way anyone enjoys reading, but it cannot miss anything either.
+
+Across the ten captured cases the two files differ in exactly one part,
+`docProps/core.xml`, and only in its timestamps — which are normalised away, so
+a changed title or creator is still compared. If the two files were written by
+different producers, that is reported as the single fact it is rather than as
+every part differing for one reason.
+
 The two questions are not interchangeable, and the report keeps them apart:
 
 > *Unchanged is not the same as correct.* A figure that was wrong when the
@@ -308,6 +321,28 @@ not on company plus treaty name, which collides: one company can carry the same
 treaty name in several programs, which it did on 12 of those 68 rows. Overrides
 pair on `GCMP Layer ID` or `MetaRisk Treaty ID`, the ids the request asked for.
 
+## The captured files are re-saves
+
+Every `.xlsx` under the capture tree says
+`Openpyxl 3.1.5` in `docProps/app.xml`. The capture step opens the download and
+saves it again, so these are not the bytes the app produced.
+
+Confirmed to survive that round trip: cell values, solid fills, conditional
+formatting, data validations, defined names. Not present in any captured file,
+so it is unknown whether the originals had them: images, charts, merged cells,
+sheet protection, column widths, freeze panes.
+
+This is survivable rather than fine, and the archive comparison is why. Golden
+and current both go through the same pipeline and lose the same things, so drift
+in everything that survives is still caught in full. What it cannot tell you is
+that a feature was already missing when the golden was blessed.
+
+Saving the `result` response bytes straight to disk, instead of re-saving them,
+would remove the doubt entirely — and the comparison would simply keep working,
+since it compares whatever parts it is given. Until then, if a check that should
+fire does not, confirm the feature survives an openpyxl round trip before
+looking for a bug in the tool.
+
 ## Standing findings
 
 As of 2026-09-01, four of the ten captured cases fail, and they fail on the
@@ -340,7 +375,8 @@ and the two read identically. This plants one defect at a time in a throwaway
 copy of each real case — changes a value, drops a row, repaints a fill, strips a
 marker, drops the rule that paints the yellow, half-writes a block, removes a
 block that was asked for, breaks a data validation, drifts a column no source
-can verify, adds a column nobody checks — and confirms the run notices.
+can verify, merges two cells nothing here models, adds a column nobody checks —
+and confirms the run notices.
 
 Each fault is judged against **the case's own baseline**, not against zero: a
 case that already carries a real finding can still be used to check that the

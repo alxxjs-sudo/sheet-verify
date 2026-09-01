@@ -203,6 +203,17 @@ const FAULTS = [
     },
   },
   {
+    // Nothing in this tool models a merged cell. The archive comparison does
+    // not model it either -- it just notices the bytes moved, which is the
+    // whole point of having it.
+    name: 'something no check understands changes',
+    count: (o) => (o.baseline?.parts?.findings.length ?? 0),
+    plant(ws, spec) {
+      ws.mergeCells(`A${spec.headerRow + 14}:B${spec.headerRow + 14}`);
+      return 'a merged cell added, which no check here models';
+    },
+  },
+  {
     name: 'a column nobody checks appears',
     count: (o) => o.coverage.unchecked.length,
     plant(ws, spec) {
@@ -231,7 +242,18 @@ async function checkCase(kind, name, caseDir, descriptor) {
       await cp(caseDir, join(work, 'case'), { recursive: true });
       await rm(join(work, 'case', 'results'), { recursive: true, force: true });
 
-      const path = join(folders(join(work, 'case')).current, file);
+      const at2 = folders(join(work, 'case'));
+      const path = join(at2.current, file);
+
+      // Planting rewrites `current` through ExcelJS, which changes the file's
+      // producer. Rewrite the golden the same way, unchanged, so the archive
+      // comparison is between two ExcelJS files and reports the planted
+      // difference instead of reporting the two writers.
+      if (at2.golden && existsSync(at2.golden)) {
+        const g = await openTemplate(at2.golden);
+        await g.wb.xlsx.writeFile(join(at2.golden, g.file));
+      }
+
       const copy = new ExcelJS.Workbook();
       await copy.xlsx.readFile(path);
       const sheet = resolveVariant(copy, descriptor).ws;
