@@ -17,12 +17,15 @@ const show = (v) => {
 export function report(kind, name, outcome) {
   const lines = [];
   const md = [];
+  const { coverage, derived, markers, fills, blocks } = outcome;
 
   md.push(`# ${kind} · ${name}`, '');
-  md.push(`Template: \`${outcome.file}\``, '');
+  md.push(`Template: \`${outcome.file}\`, sheet \`${outcome.sheet}\``, '');
 
   const total = outcome.results.reduce((t, r) => t + (r.findings?.length ?? 0), 0)
-    + outcome.fills.findings.length;
+    + fills.findings.length + (markers?.findings.length ?? 0)
+    + (derived?.findings.length ?? 0) + (blocks?.findings.length ?? 0)
+    + (coverage?.unchecked.length ?? 0) + (coverage?.shadowed.length ?? 0);
 
   lines.push(`${outcome.ok ? '✓' : '✗'} ${kind} · ${name}`);
 
@@ -35,16 +38,32 @@ export function report(kind, name, outcome) {
       md.push(`## ${r.name}`, '', `Skipped: ${r.skipped}`, '');
       continue;
     }
+    // A source carrying no columns is not an empty comparison -- it is a
+    // membership check, and saying "4x0 clean" makes real work look like none.
+    const membership = r.columns === 0;
     summary.push(
       r.findings.length
         ? `${r.name} ${n(r.findings.length)} problem(s)`
-        : `${r.name} ${n(r.rows)}×${r.columns} clean`,
+        : membership
+          ? `${r.name} ${n(r.rows)} row(s), the right ones`
+          : `${r.name} ${n(r.rows)}×${r.columns} clean`,
     );
 
     md.push(`## ${r.name}`, '');
-    md.push(`${n(r.rows)} row(s) × ${r.columns} column(s) compared.`, '');
+    md.push(
+      membership
+        ? `${n(r.rows)} row(s) asked for, checked for presence only -- this source carries `
+          + 'no values to compare.'
+        : `${n(r.rows)} row(s) × ${r.columns} column(s) compared.`,
+      '',
+    );
     if (!r.findings.length) {
-      md.push('Every value the template holds is the value this source gave.', '');
+      md.push(
+        membership
+          ? 'The template holds exactly the rows that were asked for, and no others.'
+          : 'Every value the template holds is the value this source gave.',
+        '',
+      );
     } else {
       md.push('| Row | Column | Template | Source |', '| --- | --- | --- | --- |');
       for (const f of r.findings) {
@@ -59,17 +78,130 @@ export function report(kind, name, outcome) {
   }
   lines.push(`    ${summary.join(', ')}`);
 
+  // Coverage before the findings, because it is the figure that says how much
+  // the findings are worth. A page of "clean" over a third of the sheet is not
+  // a clean template; it is a third of one.
+  if (coverage) {
+    md.push('## Coverage', '');
+    md.push(
+      `${n(coverage.checked)} of ${n(coverage.distinct)} distinct column name(s) checked against a `
+      + `source or computed from the sheet`
+      + (coverage.total !== coverage.distinct
+        ? `, from ${n(coverage.total)} header cell(s).`
+        : '.'),
+      '',
+    );
+    lines.push(
+      `    ${n(coverage.checked)}/${n(coverage.distinct)} columns covered`
+      + (coverage.declared.length ? `, ${n(coverage.declared.length)} declared unverifiable` : '')
+      + (coverage.unchecked.length ? `, ${n(coverage.unchecked.length)} UNCHECKED` : ''),
+    );
+
+    if (coverage.duplicates.length) {
+      const bad = coverage.shadowed.length;
+      if (bad) lines.push(`    ${n(bad)} SHADOWED duplicate header(s)`);
+      md.push(
+        'Header names that appear more than once. Lookup is by name, so the first '
+        + 'wins and the rest are unreachable -- nothing can check a shadowed column.',
+        '',
+      );
+      md.push('| Column | Cells | |', '| --- | --- | --- |');
+      for (const d of coverage.duplicates) {
+        const known = !coverage.shadowed.some((x) => x.column === d.column);
+        md.push(`| ${d.column} | ${d.cells.join(', ')} | ${known ? 'declared' : '**undeclared**'} |`);
+      }
+      md.push('');
+    }
+
+    if (coverage.declared.length) {
+      const byReason = new Map();
+      for (const d of coverage.declared) {
+        if (!byReason.has(d.reason)) byReason.set(d.reason, []);
+        byReason.get(d.reason).push(d.column);
+      }
+      md.push('Left unchecked on purpose, with the reason each was excused:', '');
+      md.push('| Reason | Columns |', '| --- | --- |');
+      for (const [reason, cols] of byReason) {
+        md.push(`| ${reason} | ${n(cols.length)}: ${cols.join(', ')} |`);
+      }
+      md.push('');
+    }
+
+    if (coverage.unchecked.length) {
+      md.push(
+        `**${n(coverage.unchecked.length)} column(s) nobody checked and nobody excused.** `
+        + 'Either a source can cover them, or the descriptor should say why not.',
+        '',
+      );
+      for (const u of coverage.unchecked) md.push(`- ${u.column}`);
+      md.push('');
+    }
+  }
+
+  if (blocks && (blocks.present.length || blocks.findings.length)) {
+    md.push('## Optional blocks', '');
+    for (const p of blocks.present) {
+      md.push(`- **${p.name}**: included, ${n(p.columns)} column(s).`);
+    }
+    if (blocks.ok) {
+      md.push('', 'Each block present is present in full.', '');
+    } else {
+      lines.push(`    blocks ${n(blocks.findings.length)} problem(s)`);
+      md.push('');
+      for (const f of blocks.findings) {
+        md.push(`**${f.block}**: ${f.problem}`, '');
+        md.push('Missing:', '');
+        for (const c of f.missing) md.push(`- ${c}`);
+        md.push('');
+      }
+    }
+  }
+
+  if (derived?.checked || derived?.findings.length) {
+    md.push('## Columns the sheet computes', '');
+    if (derived.ok) {
+      md.push(`${n(derived.checked)} value(s) checked; each is what the row's own columns imply.`, '');
+    } else {
+      lines.push(`    derived ${n(derived.findings.length)} problem(s)`);
+      md.push('| Row | Column | Template | Should be |', '| --- | --- | --- | --- |');
+      for (const f of derived.findings) {
+        md.push(
+          f.problem
+            ? `| — | ${f.column} | — | ${f.problem} |`
+            : `| ${f.row} | ${f.column} | ${show(f.template)} | ${show(f.expected)} |`,
+        );
+      }
+      md.push('');
+    }
+  }
+
+  if (markers?.checked || markers?.findings.length) {
+    md.push('## Editable markers', '');
+    if (markers.ok) {
+      md.push(
+        `The ${n(markers.checked)} column(s) marked editable in the header are the ones that `
+        + 'should be, and no others carry the marker.',
+        '',
+      );
+    } else {
+      lines.push(`    markers ${n(markers.findings.length)} problem(s)`);
+      md.push('| Column | Problem |', '| --- | --- |');
+      for (const f of markers.findings) md.push(`| ${f.column} | ${f.problem} |`);
+      md.push('');
+    }
+  }
+
   md.push('## Editable columns', '');
-  if (outcome.fills.ok) {
+  if (fills.ok) {
     md.push(
       'The columns marked editable are the ones that should be, and no others '
       + 'carry the fill.',
       '',
     );
   } else {
-    lines.push(`    fills ${n(outcome.fills.findings.length)} problem(s)`);
+    lines.push(`    fills ${n(fills.findings.length)} problem(s)`);
     md.push('| Group | Column | Problem | Expected | Actual |', '| --- | --- | --- | --- | --- |');
-    for (const f of outcome.fills.findings) {
+    for (const f of fills.findings) {
       md.push(
         `| ${f.group} | ${f.column} | ${f.problem} | ${f.expected ?? '—'} | ${f.actual ?? '—'} |`,
       );

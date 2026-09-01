@@ -6,10 +6,14 @@
  */
 import { projectRows, COLUMNS as PAYLOAD_COLUMNS } from './from-payload.mjs';
 import { projectTableRows, COLUMNS as UI_COLUMNS } from './from-ui.mjs';
+import { ROLEPLAY_BLOCK } from './roleplay-block.mjs';
 
 export default {
   sheet: 'Treaties',
   headerRow: 3,
+
+  // Every real row names its treaty; the trailing rows of the sheet do not.
+  rowMarker: 'Treaty Name',
 
   /**
    * Two independent readings of the same template.
@@ -62,6 +66,51 @@ export default {
       argb: 'FFFF0000',
       row: 'header',
       columns: ['ROLePlay Data ->'],
+      // Present only when the block behind it is. See `blocks` below: the
+      // download asks whether to include ROLePlay data, so the divider is
+      // absent by request rather than by fault. Absent is fine; absent when the
+      // block IS there, or present without its red, is not.
+      optional: true,
     },
   },
+
+  /**
+   * Columns that arrive together or not at all.
+   *
+   * Downloading this template opens a prompt -- "Would you like to include
+   * ROLePlay data in the template for advanced filtration?" -- and the answer
+   * decides whether the divider and the 144 columns behind it are written. So
+   * their absence is a choice, not a defect, and their PARTIAL presence is a
+   * defect that would otherwise pass unnoticed: every column that did arrive
+   * would be correct.
+   */
+  blocks: {
+    'ROLePlay data': {
+      lead: 'ROLePlay Data ->',
+      columns: ROLEPLAY_BLOCK,
+    },
+  },
+
+  /**
+   * Columns no source can speak for, and why.
+   *
+   * Everything here is reported as excused rather than passed. A column that is
+   * neither checked nor listed here fails the case -- the whole point being
+   * that "nobody looked" must never print the same as "it agreed".
+   */
+  unverifiable: {
+    'modelling output the server joins in; in neither capture': ROLEPLAY_BLOCK,
+    'a divider label rather than data -- its fill is checked instead': ['ROLePlay Data ->'],
+  },
+
+  /**
+   * Header names the template writes twice, on purpose.
+   *
+   * The ROLePlay block repeats the program identity columns it is keyed on, so
+   * "Edison Program Name" appears at E3 and again at AI3. Lookup is by name and
+   * the first wins, which leaves the second unreachable. Declared here so it
+   * reads as known rather than as an oversight -- and so a name that starts
+   * repeating for some other reason is reported instead of absorbed.
+   */
+  duplicateHeaders: ['Edison Program Name'],
 };

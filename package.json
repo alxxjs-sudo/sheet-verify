@@ -44,7 +44,8 @@
     "clean:templates": "node template_comparison/cli.mjs --clean",
     "links": "node scripts/check-links.mjs",
     "example": "node --experimental-strip-types examples/run-cases.ts",
-    "example:case-json": "node --experimental-strip-types examples/case-json-demo.ts"
+    "example:case-json": "node --experimental-strip-types examples/case-json-demo.ts",
+    "check:templates": "node template_comparison/self-check.mjs"
   },
   "dependencies": {
     "csv-parse": "^7.0.2",

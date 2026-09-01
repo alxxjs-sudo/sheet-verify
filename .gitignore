@@ -48,3 +48,10 @@ template_comp_data/
 template-comp-data/
 basic_template_comparison/
 basic-template-comparison/
+
+# The capture tree, when it is dropped at the top of the checkout rather than
+# under comparison/. Anchored with a leading slash on purpose: an unanchored
+# `templates/` matches at any depth and would swallow
+# template_comparison/templates/, which is the tool's own descriptors and is
+# meant to be committed.
+/templates/
