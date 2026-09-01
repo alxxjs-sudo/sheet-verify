@@ -46,7 +46,8 @@
     "example": "node --experimental-strip-types examples/run-cases.ts",
     "example:case-json": "node --experimental-strip-types examples/case-json-demo.ts",
     "check:templates": "node template_comparison/self-check.mjs",
-    "bless:templates": "node template_comparison/cli.mjs --bless"
+    "bless:templates": "node template_comparison/cli.mjs --bless",
+    "gaps:templates": "node template_comparison/gaps.mjs"
   },
   "dependencies": {
     "csv-parse": "^7.0.2",

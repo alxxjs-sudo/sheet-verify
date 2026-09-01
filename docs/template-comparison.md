@@ -14,6 +14,7 @@ it shows up in a report comparison, because a template is not a report.
 npm run compare:templates              # verify ./comparison/templates
 npm run compare:templates -- <folder>  # verify somewhere else
 npm run bless:templates                # take the current downloads as the contract
+npm run gaps:templates                 # what the cases have never exercised
 npm run check:templates                # verify the checks themselves
 npm run clean:templates                # clear the results folders
 ```
@@ -363,6 +364,36 @@ down, which is the half of the round trip Excel enforces on upload.
 
 Blessing does not silence this and is not meant to: it is a standing defect, not
 drift, and the golden comparison has nothing to say about it.
+
+## What the cases have never exercised
+
+```bash
+npm run gaps:templates -- <folder>
+```
+
+A green run says the cases that exist all pass. It says nothing about the ones
+that do not exist, and *"we have cases"* reads exactly like *"we have coverage"*
+until somebody checks. This reads every case of a kind together and reports what
+none of them contains — the list of downloads still worth capturing.
+
+Three questions, in the order they are worth answering:
+
+1. **A column allows a value no case has ever held.** The sheet's own list rule
+   says `Include` may be `Yes` or `No`; only `Yes` has ever appeared, so the
+   other is a path through the app no capture has taken.
+2. **A column is empty in every row of every case.** Nothing it does has been
+   seen at all.
+3. **A column holds one value everywhere.** Its comparison has never had to
+   distinguish anything, so it would pass while broken.
+
+Everything is measured from the files, so nothing goes stale: as cases are added
+the gaps close on their own, and a column that starts varying stops being
+reported without anyone editing a list. Findings are ranked, with editable
+columns and payload flags first — a gap on a read-only column is usually just
+what the test data happens to be, while an editable one never filled is a field
+the round trip has never carried.
+
+It never fails a build. It is a worklist, not a verdict.
 
 ## Checking the checks
 
