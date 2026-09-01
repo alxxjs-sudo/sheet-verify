@@ -17,7 +17,7 @@ const show = (v) => {
 export function report(kind, name, outcome) {
   const lines = [];
   const md = [];
-  const { coverage, derived, markers, fills, blocks, painted, validations } = outcome;
+  const { coverage, derived, markers, fills, blocks, painted, validations, baseline } = outcome;
 
   md.push(`# ${kind} · ${name}`, '');
   md.push(`Template: \`${outcome.file}\`, sheet \`${outcome.sheet}\``, '');
@@ -78,6 +78,47 @@ export function report(kind, name, outcome) {
     }
   }
   lines.push(`    ${summary.join(', ')}`);
+
+  if (baseline) {
+    md.push('## Against the golden', '');
+    if (baseline.missing) {
+      lines.push('    no golden to compare against');
+      md.push(
+        'There is no `golden/` for this case yet, so nothing was compared. Run '
+        + '`npm run bless:templates` once this download has been read and is worth '
+        + 'keeping as the contract.',
+        '',
+      );
+    } else {
+      md.push(
+        `${n(baseline.compared)} value(s) over ${n(baseline.rows)} row(s) × `
+        + `${n(baseline.columns)} column(s), plus the header fills and the rules attached to them.`,
+        '',
+      );
+      // Said plainly, because the two claims are easy to conflate and only one
+      // of them is about correctness.
+      md.push(
+        '*Unchanged is not the same as correct.* This reaches every column, '
+        + 'including the ones no capture can speak for — but a figure that was '
+        + 'wrong when the golden was blessed is still wrong and this will not say so.',
+        '',
+      );
+      if (baseline.ok) {
+        lines.push(`    ${n(baseline.columns)} column(s) unchanged since the golden`);
+        md.push('Identical to the golden in every cell compared.', '');
+      } else {
+        lines.push(`    golden ${n(baseline.findings.length)} difference(s)`);
+        md.push('| What | Where | Golden | Current |', '| --- | --- | --- | --- |');
+        for (const f of baseline.findings) {
+          md.push(
+            `| ${f.kind} | ${f.what}${f.row ? ` \`${f.row}\`` : ''} `
+            + `| ${f.problem ?? show(f.golden)} | ${f.problem ? '—' : show(f.current)} |`,
+          );
+        }
+        md.push('');
+      }
+    }
+  }
 
   // Coverage before the findings, because it is the figure that says how much
   // the findings are worth. A page of "clean" over a third of the sheet is not

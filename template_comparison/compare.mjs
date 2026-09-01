@@ -6,15 +6,35 @@
  * lined up and the rest had shuffled -- so a positional comparison would report
  * every row after the first shuffle as wrong.
  */
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import ExcelJS from 'exceljs';
 import { checkFills, checkMarkers, checkConditionalFills } from './check-fills.mjs';
+import { checkBaseline } from './check-baseline.mjs';
 import { checkValidations } from './check-validations.mjs';
 import { collapse } from './values.mjs';
 
 /** A column is a name, or a name with its own idea of what agreement means. */
 const nameOf = (c) => (typeof c === 'string' ? c : c.name);
+
+/**
+ * Where a case keeps the download under test, and the one it is judged against.
+ *
+ * `current/` and `golden/` are the shape the report comparison already uses, so
+ * a case looks the same whichever tool is reading it. `template/` is the older
+ * single-folder shape and still works, with nothing to compare against -- named
+ * in the report rather than silently treated as a case with a clean baseline.
+ */
+export function folders(caseDir) {
+  if (existsSync(join(caseDir, 'current'))) {
+    return { current: join(caseDir, 'current'), golden: join(caseDir, 'golden'), layout: 'golden' };
+  }
+  if (existsSync(join(caseDir, 'template'))) {
+    return { current: join(caseDir, 'template'), golden: null, layout: 'template' };
+  }
+  return null;
+}
 
 /** Opens the one .xlsx in a folder. */
 export async function openTemplate(dir) {
@@ -355,10 +375,10 @@ export function checkCoverage(ws, spec, compared, derivedColumns = new Set()) {
 
 /** Everything one case has to say. */
 export async function compareCase(caseDir, descriptor) {
-  const { readFile } = await import('node:fs/promises');
-  const { existsSync } = await import('node:fs');
+  const where = folders(caseDir);
+  if (!where) throw new Error(`no current/ or template/ folder in ${caseDir}`);
 
-  const { wb, file } = await openTemplate(join(caseDir, 'template'));
+  const { wb, file } = await openTemplate(where.current);
   const { spec, ws } = resolveVariant(wb, descriptor);
   const results = [];
   const used = [];
@@ -421,15 +441,28 @@ export async function compareCase(caseDir, descriptor) {
   // argument are in the file.
   const shape = reader(ws, spec.headerRow, spec.rowMarker);
   const validations = checkValidations(ws, shape.rows, shape.columns);
+
+  // Against the blessed download. Reaches every column, including the ones no
+  // capture can speak for -- and answers a different question from the rest:
+  // has this changed, not is this right.
+  let baseline = null;
+  if (where.golden && existsSync(where.golden)) {
+    const g = await openTemplate(where.golden);
+    const golden = resolveVariant(g.wb, descriptor).ws;
+    baseline = checkBaseline(ws, golden, spec, spec.sources[0].key);
+  } else if (where.golden) {
+    baseline = { missing: true, ok: true, columns: 0, rows: 0, compared: 0, findings: [] };
+  }
   const coverage = checkCoverage(ws, spec, used, derived.columns);
 
   const failed = results.reduce((n, r) => n + (r.findings?.length ?? 0), 0)
     + fills.findings.length + markers.findings.length + painted.findings.length
     + derived.findings.length + blocks.findings.length + validations.findings.length
-    + coverage.unchecked.length + coverage.shadowed.length;
+    + coverage.unchecked.length + coverage.shadowed.length
+    + (baseline?.findings.length ?? 0);
 
   return {
-    file, sheet: ws.name, results, fills, markers, painted, derived, blocks, validations,
-    coverage, ok: failed === 0,
+    file, sheet: ws.name, layout: where.layout, results, fills, markers, painted, derived,
+    blocks, validations, baseline, coverage, ok: failed === 0,
   };
 }

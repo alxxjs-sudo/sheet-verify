@@ -4,6 +4,7 @@
  *
  *   npm run compare:templates              verify ./comparison/templates
  *   npm run compare:templates -- <folder>  verify somewhere else
+ *   npm run bless:templates                take the current downloads as the contract
  *   npm run clean:templates                clear the results folders
  *
  * <folder> is the templates root, holding a folder per kind. Naming one kind's
@@ -20,7 +21,8 @@
  *   comparison/templates/
  *     program_selection_template/
  *       <case>/
- *         template/template.xlsx      what the app produced
+ *         current/template.xlsx       what the app produced
+ *         golden/template.xlsx        what it produced when this was blessed
  *         data/payload_data.json      what the client sent
  *         data/table_data.json        what the screen showed
  *         results/report.md           written by this run
@@ -29,15 +31,16 @@
  * descriptor under ./templates/. A folder with no descriptor is reported rather
  * than skipped: a case nobody is checking looks exactly like a case that passed.
  */
-import { readdir, mkdir, writeFile, rm } from 'node:fs/promises';
+import { readdir, mkdir, writeFile, rm, copyFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compareCase } from './compare.mjs';
+import { compareCase, folders, openTemplate } from './compare.mjs';
 import { report } from './report.mjs';
 
 const args = process.argv.slice(2);
 const CLEAN = args.includes('--clean');
+const BLESS = args.includes('--bless');
 const ROOT = args.find((a) => !a.startsWith('-')) ?? 'comparison/templates';
 // fileURLToPath and not `.pathname`, which is percent-encoded: a checkout under
 // a folder named "OneDrive - MMC" gave a HERE of "OneDrive%20-%20MMC", so no
@@ -77,8 +80,24 @@ for (const { kind, dir } of kinds) {
 
   for (const name of await dirs(dir)) {
     const caseDir = join(dir, name);
-    if (!existsSync(join(caseDir, 'template'))) continue;
+    const where = folders(caseDir);
+    if (!where) continue;
     cases++;
+
+    // Take the current download as the new contract. Separate from a run so it
+    // is always deliberate: blessing a drift you have not read is how a wrong
+    // figure becomes the thing everything else is measured against.
+    if (BLESS) {
+      if (!where.golden) {
+        console.log(`- ${kind} · ${name}: nothing to bless, this case has no golden/`);
+        continue;
+      }
+      const { file } = await openTemplate(where.current);
+      await mkdir(where.golden, { recursive: true });
+      await copyFile(join(where.current, file), join(where.golden, file));
+      console.log(`  blessed ${relative('.', join(where.golden, file)).replace(/\\/g, '/')}`);
+      continue;
+    }
 
     // A run overwrites what it produces, so this is not needed for a correct
     // comparison -- it is needed for an honest one. A case that stops failing
@@ -121,6 +140,10 @@ if (unknown.length) {
 }
 
 console.log('');
+if (BLESS) {
+  console.log(`${cases} case(s) blessed`);
+  process.exit(0);
+}
 if (CLEAN) {
   console.log(`${cases} case(s) cleared`);
   process.exit(0);

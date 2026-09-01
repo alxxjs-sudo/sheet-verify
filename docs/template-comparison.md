@@ -13,6 +13,7 @@ it shows up in a report comparison, because a template is not a report.
 ```bash
 npm run compare:templates              # verify ./comparison/templates
 npm run compare:templates -- <folder>  # verify somewhere else
+npm run bless:templates                # take the current downloads as the contract
 npm run check:templates                # verify the checks themselves
 npm run clean:templates                # clear the results folders
 ```
@@ -45,11 +46,17 @@ One folder per template kind, one folder per case:
 comparison/templates/
   program_selection_template/
     <case name>/
-      template/template.xlsx      what the app produced
+      current/template.xlsx       what the app produced
+      golden/template.xlsx        what it produced when this was blessed
       data/payload_data.json      what the client sent
       data/table_data.json        what the screen showed
       results/report.md           written by the run
 ```
+
+The same `golden` / `current` shape the report comparison uses, so a case reads
+the same whichever tool is looking at it. A case with an older single
+`template/` folder still runs, with nothing to compare against; the report names
+which layout it found rather than treating a missing baseline as a clean one.
 
 The kind's folder name must match a descriptor under
 `template_comparison/templates/`. A folder with no descriptor is **reported
@@ -144,6 +151,24 @@ an Excel formula engine, and claiming to have checked something that was skipped
 is the failure this whole tool exists to avoid. Their row references are still
 checked, which is what (2) is for.
 
+**The current download against the golden.** Every other check asks *is this
+right*, and answers only where a source can reach. This one asks *has this
+changed*, and reaches everything — all 175 columns, including the 136 no capture
+can speak for. Values are paired by the same business key, never by position,
+and the header fills and data validations are compared too, so a contract the
+descriptor never knew about still cannot drift quietly.
+
+The two questions are not interchangeable, and the report keeps them apart:
+
+> *Unchanged is not the same as correct.* A figure that was wrong when the
+> golden was blessed is still wrong, and this will not say so.
+
+`npm run bless:templates` takes the current downloads as the new contract. It is
+a separate command on purpose — blessing a drift nobody has read is how a wrong
+figure becomes the thing everything else is measured against. Blessing also
+cannot hide a real defect: it silences the golden difference and leaves the
+payload and table checks failing exactly as they were.
+
 **Optional blocks, all or nothing.** See below.
 
 **That the capture and the template belong together.** Both captures state what
@@ -228,6 +253,16 @@ rule is skipped when its columns are absent, and a skipped rule leaves its
 column counted as **unchecked** rather than taking the rule's word for a check
 that never ran.
 
+The remaining 136 are covered by the golden comparison — for drift, which is
+what a release actually introduces. So a ROLePlay template reads:
+
+```
+39/175 columns covered, 136 declared unverifiable
+175 column(s) unchanged since the golden
+```
+
+Two different claims about the same sheet, and both are true.
+
 `Edison Program Name` appears twice in the 176-column sheet, at E3 and again at
 AI3, because the block repeats the identity columns it is keyed on. Lookup is by
 name and the first wins, which leaves the second unreachable — declared in the
@@ -282,8 +317,9 @@ npm run check:templates -- <folder>
 A comparison that reports nothing is either a clean template or a broken check,
 and the two read identically. This plants one defect at a time in a throwaway
 copy of each real case — changes a value, drops a row, repaints a fill, strips a
-marker, drops the rule that paints the yellow, half-writes a block, breaks a
-data validation, adds a column nobody checks — and confirms the run notices.
+marker, drops the rule that paints the yellow, half-writes a block, removes a
+block that was asked for, breaks a data validation, drifts a column no source
+can verify, adds a column nobody checks — and confirms the run notices.
 
 Each fault is judged against **the case's own baseline**, not against zero: a
 case that already carries a real finding can still be used to check that the

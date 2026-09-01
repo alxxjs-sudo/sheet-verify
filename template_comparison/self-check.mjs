@@ -24,7 +24,7 @@ import { join, basename, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import ExcelJS from 'exceljs';
-import { compareCase, resolveVariant, openTemplate } from './compare.mjs';
+import { compareCase, resolveVariant, openTemplate, folders } from './compare.mjs';
 
 const args = process.argv.slice(2);
 const ROOT = args.find((a) => !a.startsWith('-')) ?? 'comparison/templates';
@@ -186,6 +186,23 @@ const FAULTS = [
     },
   },
   {
+    // The one only the golden can see: change a column no source speaks for.
+    // Every other check passes, because none of them is looking there.
+    name: 'a column no source can verify drifts',
+    count: (o) => o.baseline?.findings.length ?? 0,
+    plant(ws, spec, checked) {
+      const known = new Set([...checked, ...(spec.derived ?? []).map((d) => d.column)]);
+      for (const [name, n] of at(ws, spec)) {
+        if (known.has(name)) continue;
+        const cell = ws.getRow(spec.headerRow + 1).getCell(n);
+        if (cell.value === null || cell.value === undefined || cell.value === '') continue;
+        cell.value = typeof cell.value === 'number' ? cell.value + 1 : `${text(cell.value)} drifted`;
+        return `"${name}" changed, which no source checks`;
+      }
+      return null;
+    },
+  },
+  {
     name: 'a column nobody checks appears',
     count: (o) => o.coverage.unchecked.length,
     plant(ws, spec) {
@@ -199,7 +216,7 @@ const FAULTS = [
 const at = (ws, spec) => headers(ws, spec.headerRow);
 
 async function checkCase(kind, name, caseDir, descriptor) {
-  const { wb, file } = await openTemplate(join(caseDir, 'template'));
+  const { wb, file } = await openTemplate(folders(caseDir).current);
   const { spec, ws } = resolveVariant(wb, descriptor);
 
   // Which columns a source actually compares, so the "value changed" fault
@@ -214,7 +231,7 @@ async function checkCase(kind, name, caseDir, descriptor) {
       await cp(caseDir, join(work, 'case'), { recursive: true });
       await rm(join(work, 'case', 'results'), { recursive: true, force: true });
 
-      const path = join(work, 'case', 'template', file);
+      const path = join(folders(join(work, 'case')).current, file);
       const copy = new ExcelJS.Workbook();
       await copy.xlsx.readFile(path);
       const sheet = resolveVariant(copy, descriptor).ws;
@@ -265,7 +282,7 @@ for (const { kind, dir } of kinds) {
 
   for (const name of await dirs(dir)) {
     const caseDir = join(dir, name);
-    if (!existsSync(join(caseDir, 'template'))) continue;
+    if (!folders(caseDir)) continue;
     cases++;
 
     const { skipped, results } = await checkCase(kind, name, caseDir, descriptor);
