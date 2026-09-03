@@ -1604,8 +1604,8 @@ ${DISPLAY(relative(process.cwd(), written.markdown))} — and the .xlsx beside i
   if (unchecked) {
     const cases = records.filter((r) => (r.uncheckedDiffering ?? 0) > 0).length;
     console.log(
-      `${count(unchecked)} differing cell(s) nobody checked, across ${cases} case(s)` +
-      ' — a table with no row key was not compared.',
+      `${count(unchecked)} differing cell(s) outside the keyed comparison, across ${cases} case(s)` +
+      ' — layer 2 found them; layer 1 had no row key for their table.',
     );
   }
 

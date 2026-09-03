@@ -62,9 +62,10 @@ the type level breaks every other case.
 - `## Matched by row position (n)` — every table with no key, with its row
   count, its column names, and a ready-to-paste JSON snippet. This is the
   worklist.
-- `## Differing, and nothing checked them (n)` — cells that changed where layer 1
-  never reached. A number above zero here is a coverage hole, and usually the
-  first symptom of a mis-detected table.
+- `## Differing, outside the keyed comparison (n)` — cells that changed and that
+  layer 2 caught by address because layer 1 never reached them. A number above
+  zero here is a hole in layer 1's coverage, and usually the first symptom of a
+  mis-detected table.
 - `**Comparison integrity**` under a table in `## What changed` — a key column
   that was configured and not found. This means your configuration is landing on
   the wrong table, not that the report is wrong.
@@ -406,9 +407,9 @@ below it is wrong.
 Also real: one case of a validation report carries an extra `Program Owners`
 row, so its perils table starts at row 24 where the other two cases start at
 row 23. The type-level `headerRow: 23` landed on the banner row above, the
-configured key was not found, and the table was **not compared at all** — a
-silent coverage hole, visible only as three differing cells in
-`## Differing, and nothing checked them`.
+configured key was not found, and the table was **not compared by key at all** —
+a hole in layer 1, visible only as three differing cells in
+`## Differing, outside the keyed comparison`.
 
 The fix is a per-case override:
 
@@ -468,9 +469,9 @@ The two numbers worth watching after a change:
 
 - `| tables compared | 41, 30 by row position |` in the report header — the
   second number should fall as you add keys.
-- `! n differing cell(s) nobody checked` in the run log — cells that changed
-  and that layer 1 never reached. This is the number that says a table is
-  mis-detected rather than merely unkeyed.
+- `! n differing cell(s) outside the keyed comparison` in the run log — cells
+  that changed and that layer 1 never reached. This is the number that says a
+  table is mis-detected rather than merely unkeyed.
 
 Both are in every `report.md`, so a configuration change can be measured rather
 than believed.

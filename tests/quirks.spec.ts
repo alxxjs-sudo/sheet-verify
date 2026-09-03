@@ -834,7 +834,7 @@ test.describe('report shape', () => {
     const swept = await sweep(golden, actual, compared);
     const md = formatMarkdownReport(diff, swept, { name: 'gaps' });
 
-    expect(md).toContain('## Differing, and nothing checked them');
+    expect(md).toContain('## Differing, outside the keyed comparison');
     expect(md).toMatch(/\*\*Alpha\*\* — \d+ cell\(s\)/);
     expect(md).toContain('| Cell | Golden | Actual | Why |');
     expect(md).not.toContain('| Sheet | Cell | Golden | Actual | Why |');

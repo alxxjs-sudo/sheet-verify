@@ -116,9 +116,9 @@ function caseTable(list: CaseRecord[]): string[] {
 function watchNote(list: CaseRecord[]): string | undefined {
   const watch = list.filter((c) => (c.uncheckedDiffering ?? 0) > 0);
   if (!watch.length) return undefined;
-  return `> **${watch.length} case(s) here have differing cells nobody checked.** ` +
+  return `> **${watch.length} case(s) here have differing cells outside the keyed comparison.** ` +
     watch.map((c) => `\`${c.name}\` (${n(c.uncheckedDiffering!)})`).join(', ') +
-    ' — a table with no row key was not compared. See the case report.';
+    ' — layer 2 found them; layer 1 had no row key for their table. See the case report.';
 }
 
 export interface SummaryScope {
@@ -163,8 +163,8 @@ export function summaryMarkdown(
     : scope.rebuilt
       ? '> Rebuilt from the results already on disk rather than from a fresh ' +
         'comparison. Each case is as its own last run left it. **Differing cells ' +
-        "nobody checked are not counted here** — that total belongs to layer 2, " +
-        "which is not in `diff.json`. Each case report has it."
+        "outside the keyed comparison are not counted here** — that total belongs " +
+        "to layer 2, which is not in `diff.json`. Each case report has it."
       : '';
   if (note) out.splice(5, 0, '', note);
 
@@ -231,8 +231,8 @@ export function typeSummaryMarkdown(
     : scope.rebuilt
       ? '> Rebuilt from the results already on disk rather than from a fresh ' +
         'comparison. Each case is as its own last run left it. **Differing cells ' +
-        "nobody checked are not counted here** — that total belongs to layer 2, " +
-        "which is not in `diff.json`. Each case report has it."
+        "outside the keyed comparison are not counted here** — that total belongs " +
+        "to layer 2, which is not in `diff.json`. Each case report has it."
       : '';
   if (note) out.push(note, '');
 
@@ -248,7 +248,7 @@ export function typeSummaryMarkdown(
         `${n(sum(sorted, (c) => c.tablesNotCompared))} not compared` +
         // A rebuild never saw layer 2, so a "0" here would be an answer it does
         // not have rather than the answer.
-        (scope.rebuilt ? '.' : `, ${n(unchecked)} differing cell(s) nobody checked.`),
+        (scope.rebuilt ? '.' : `, ${n(unchecked)} differing cell(s) outside the keyed comparison.`),
     );
   }
 
@@ -441,7 +441,7 @@ export async function writeTypeSummaryWorkbook(
     // See the markdown: a rebuild never ran layer 2 and cannot answer this.
     (scope.rebuilt
       ? ''
-      : `, ${n(sum(sorted, (c) => c.uncheckedDiffering))} differing cell(s) nobody checked`);
+      : `, ${n(sum(sorted, (c) => c.uncheckedDiffering))} differing cell(s) outside the keyed comparison`);
   ws.getCell('A2').font = { color: { argb: 'FF6B7280' } };
 
   caseSheet(ws, sorted);

@@ -352,7 +352,7 @@ test.describe('runCase and layer 2', () => {
     const off = await runCase(actual, dir, { ...SPEC, sweepCells: false } as CaseOptions);
     expect(off.sweep).toBeNull();
     // The report is still written; it simply carries no layer 2 sections.
-    expect(await readFile(off.files.report, 'utf8')).not.toContain('nothing checked them');
+    expect(await readFile(off.files.report, 'utf8')).not.toContain('outside the keyed comparison');
   });
 
   /**

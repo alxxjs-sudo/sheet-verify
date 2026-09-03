@@ -792,9 +792,11 @@ export function formatMarkdownReport(
   }
 
   if (swept && swept.totalGaps > 0) {
-    out.push('', `## Differing, and nothing checked them (${swept.totalGaps})`, '');
-    out.push('Found by sweeping every cell by address. The keyed comparison did not');
-    out.push('reach these, so they would otherwise have gone unreported.');
+    out.push('', `## Differing, outside the keyed comparison (${swept.totalGaps})`, '');
+    out.push('Layer 2 found these by sweeping every cell by address. Layer 1 never');
+    out.push('reached them — their table had no row key — so they are listed here');
+    out.push('rather than under a column name. They are a gap in layer 1\'s coverage,');
+    out.push('not cells that went unexamined.');
     out.push('');
 
     // Grouped by sheet, as "Will recalculate differently" is: one block each,

@@ -1049,5 +1049,5 @@ export function summarizeSweep(s: SweepResult): string {
   if (s.totalGaps === 0) {
     return `${s.totalDifferences} differing, all accounted for by layer 1${tol}${meta}`;
   }
-  return `${s.totalGaps} differing cell(s) nobody checked (of ${s.totalDifferences})${tol}${meta}`;
+  return `${s.totalGaps} differing cell(s) outside the keyed comparison (of ${s.totalDifferences})${tol}${meta}`;
 }

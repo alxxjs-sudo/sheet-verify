@@ -6,6 +6,24 @@ shapes. Detection changes ship as minors, each saying what to recheck.
 
 ## 1.13.0 — 2026-09-03
 
+### "Nothing checked them" said the one thing that was not true
+
+The heading over layer 2's coverage gap read:
+
+    ## Differing, and nothing checked them (17)
+
+Which contradicts itself: if nothing had checked them, nobody would know they
+differ. Layer 2 checked them -- that is how they got there. What did not reach
+them is layer 1, because their table had no row key. Read literally, the old
+heading said the tool had skipped 17 cells it had in fact examined, and on a
+report with a five-hundred-cell gap list that is an alarming thing to say.
+
+It now reads `## Differing, outside the keyed comparison`, and the paragraph
+under it names both layers. The same wording follows through the run log, the
+run summary and the per-type summaries, which all carried `nobody checked`.
+
+No behaviour changes; the counts are the ones they always were.
+
 ### A clean verdict over a six-figure count no longer reads as a contradiction
 
 A report opened with **Identical.** and then, four lines down:
@@ -20,8 +38,6 @@ which does not. Layer 2 never decides the verdict, so the case passes -- but
 nobody reading that table would have believed it.
 
 The table now says so where the two disagree, and only there.
-
-## 1.13.0 — 2026-09-03
 
 ### A file nobody compared no longer reads as a pass
 
