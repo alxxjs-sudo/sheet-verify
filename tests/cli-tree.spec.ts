@@ -868,4 +868,62 @@ test.describe('a tree of report types', () => {
     // indistinguishable from a case that passed.
     expect(md).toContain('never run');
   });
+
+  test('a file in golden/ or current/ that nothing compared fails the case and is named', async () => {
+    await buildTree();
+    // A case whose two sides each hold the spreadsheet AND an archive beside
+    // it. Found in a real tree: results.csv plus details.zip and unused.zip,
+    // reported "Identical" having opened one of the three.
+    const dir = join(ROOT, 'reports', 'srq', 'case_folders');
+    await mkdir(join(dir, 'golden'), { recursive: true });
+    await mkdir(join(dir, 'current'), { recursive: true });
+    const g = await buildMultiSheet('uncmp-g.xlsx');
+    const a = await buildMultiSheet('uncmp-a.xlsx');
+    await cp(g, join(dir, 'golden', 'golden-x.xlsx'));
+    await cp(a, join(dir, 'current', 'actual-x.xlsx'));
+    await writeFile(join(dir, 'golden', 'golden-x-details.zip'), 'not really a zip', 'utf8');
+    await writeFile(join(dir, 'current', 'actual-x-details.zip'), 'not really a zip', 'utf8');
+
+    const { out, code } = cli(dir);
+    expect(code).toBe(1);
+    expect(out).toContain('that nothing compared');
+    expect(out).toContain('golden-x-details.zip');
+    expect(out).toContain('actual-x-details.zip');
+
+    const md = await readFile(join(dir, 'results', 'report.md'), 'utf8');
+    expect(md).toContain('## Files nothing compared (2)');
+    // Said plainly, because a pass that skipped a file is the failure this
+    // whole tool exists to prevent.
+    expect(md).toContain('it says nothing about these');
+  });
+
+  test('a type folder naming itself analysisType is not filed as unspecified', async () => {
+    await buildTree();
+    await writeJson(join(ROOT, 'reports', 'srq', 'meta.json'), { analysisType: 'Natural Cat SRQ' });
+
+    const { out } = cli(ROOT);
+    expect(out).toContain('Natural Cat SRQ');
+    // The heading that means "nobody set this" must not appear over a folder
+    // where somebody plainly did.
+    expect(out).not.toContain('Unspecified report type (reports/srq)');
+  });
+
+  test("one case's unreadable settings do not stop every other case", async () => {
+    await buildTree();
+    // `metadata` is this tool's word for cells to read but not judge. A
+    // generator used it for its own record of the run, and the whole tree
+    // stopped: three cases, none compared, over one file.
+    await writeJson(join(ROOT, 'reports', 'srq', 'case_001', 'case.json'), {
+      metadata: { geography: 'US/Canada', gaps: 'None' },
+    });
+
+    const { out, code } = cli(ROOT);
+    expect(code).toBe(1);
+    // Named, with the file, the key, and what was expected -- not a TypeError.
+    expect(out).toContain('cannot be read as settings');
+    expect(out).toContain('"metadata" should be an array');
+    expect(out).toContain('could not be run');
+    // And the other two ran anyway.
+    expect(out).toMatch(/2 cases?,/);
+  });
 });

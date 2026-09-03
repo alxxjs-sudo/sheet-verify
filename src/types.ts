@@ -508,6 +508,14 @@ export interface WorkbookSpec {
    */
   reportType?: string;
   /**
+   * The same thing, under the word a generator's own domain uses. A Conditional
+   * EP is an analysis and a Data Transmittal is an entity, and a tree naming
+   * them that way should not have every one of those folders filed under
+   * "Unspecified report type". `reportType` wins where more than one is set.
+   */
+  analysisType?: string;
+  entityType?: string;
+  /**
    * Where the two files came from -- ids, download timestamps, hashes. Carried
    * for provenance and never read by the comparison, so its shape is whatever
    * the tool that fetched the pair chose to record.

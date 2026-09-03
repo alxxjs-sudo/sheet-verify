@@ -259,6 +259,15 @@ interface Case {
   dir: string;
   golden: string;
   actual: string;
+  /**
+   * Files sitting in golden/ or current/ that no comparison read.
+   *
+   * A case holding results.csv plus details.zip and unused.zip was reported
+   * "Identical" having compared one of the three, and said nothing about the
+   * other two. Naming them is the difference between a pass and a pass nobody
+   * can trust.
+   */
+  uncompared: string[];
 }
 
 const isSpreadsheet = (f: string) => SPREADSHEET.has(extname(f).toLowerCase());
@@ -277,20 +286,37 @@ const isSpreadsheet = (f: string) => SPREADSHEET.has(extname(f).toLowerCase());
  * Returns the one spreadsheet inside, the reason there isn't one, or undefined
  * when no such folder exists and the flat layout should be tried instead.
  */
-async function roleFolder(dir: string, roles: string[]): Promise<string | undefined | Problem> {
+async function roleFolder(
+  dir: string,
+  roles: string[],
+): Promise<{ file: string; others: string[] } | undefined | Problem> {
   let found: string | undefined;
   let entries: string[] = [];
+  let others: string[] = [];
   for (const role of roles) {
     try {
-      const inside = (await readdir(join(dir, role), { withFileTypes: true }))
-        .filter((e) => e.isFile() && isSpreadsheet(e.name))
+      const all = (await readdir(join(dir, role), { withFileTypes: true }))
+        .filter((e) => e.isFile())
         .map((e) => e.name);
-      if (!found) { found = role; entries = inside; }
+      if (found) continue;
+      found = role;
+      entries = all.filter(isSpreadsheet);
+      // Everything else in there. A golden/ or current/ folder exists to hold
+      // one side's output, so a file in it that nothing compares is an
+      // artefact nobody checked -- and a case reporting "Identical" while
+      // ignoring two of its three files is the exact failure this tool is for.
+      others = all.filter((f) => !isSpreadsheet(f));
     } catch { /* no folder by that name */ }
   }
   if (!found) return undefined;
 
-  if (!entries.length) return { problem: `${found}/ holds no .xlsx, .xlsm or .csv file` };
+  if (!entries.length) {
+    return {
+      problem: others.length
+        ? `${found}/ holds no .xlsx, .xlsm or .csv file, only [${others.sort().join(', ')}]`
+        : `${found}/ holds no .xlsx, .xlsm or .csv file`,
+    };
+  }
   // Picking one would be a guess, and the whole point of the folder is that
   // the file names no longer say which is which.
   if (entries.length > 1) {
@@ -299,7 +325,7 @@ async function roleFolder(dir: string, roles: string[]): Promise<string | undefi
         + ' — it must hold exactly one',
     };
   }
-  return join(found, entries[0]!);
+  return { file: join(found, entries[0]!), others: others.map((f) => join(found, f)) };
 }
 
 interface Problem { problem: string }
@@ -339,7 +365,13 @@ async function readCase(dir: string, root: string): Promise<Case | string> {
       if (!g) return 'a current/ folder is here with no golden/ folder beside it';
       if (!a) return 'a golden/ folder is here with no current/ folder beside it';
       const name = DISPLAY(relative(root, dir)) || basename(dir);
-      return { name, dir, golden: join(dir, g), actual: join(dir, a) };
+      return {
+        name,
+        dir,
+        golden: join(dir, g.file),
+        actual: join(dir, a.file),
+        uncompared: [...g.others, ...a.others].map(DISPLAY),
+      };
     }
     return entries.length
       ? `no golden file. Rename one of [${entries.join(', ')}] to golden${extname(entries[0]!)}`
@@ -358,7 +390,7 @@ async function readCase(dir: string, root: string): Promise<Case | string> {
 
   // The path, not the folder name: case_001 will exist under every report type.
   const name = DISPLAY(relative(root, dir)) || basename(dir);
-  return { name, dir, golden: join(dir, golden), actual: join(dir, actual) };
+  return { name, dir, golden: join(dir, golden), actual: join(dir, actual), uncompared: [] };
 }
 
 const DISPLAY = (p: string) => p.split(sep).join('/');
@@ -462,7 +494,7 @@ async function reportTypeFolders(
     // an invisible one.
     const spec = await readJson(join(dir, 'meta.json'))
       .catch(() => ({ reportType: '?' }) as WorkbookSpec);
-    if (spec?.reportType) into.push(dir);
+    if (spec && typeNamedBy(spec)) into.push(dir);
   }
 
   for (const e of entries) {
@@ -501,7 +533,7 @@ export async function findRoot(target: string): Promise<string> {
 const CONFIG_KEYS = new Set([
   'defaults', 'sheets', 'ignoreSheets', 'metadata', 'strictSheets',
   'matchUnkeyedRowsByPosition', 'cases',
-  'label', 'reportType', 'source', 'expect', '//',
+  'label', 'reportType', 'analysisType', 'entityType', 'source', 'expect', '//',
 ]);
 
 /**
@@ -546,6 +578,50 @@ function misplacedSheetSpecs(spec: WorkbookSpec): string[] {
     .map(([k]) => k);
 }
 
+/**
+ * The shape each of this tool's own keys has to have.
+ *
+ * A key it does not recognise is somebody else's and is left alone -- see
+ * `misplacedSheetSpecs`. But a key it DOES recognise is read as its own, and a
+ * generator that happens to use the same word writes something of a different
+ * shape into it. `metadata` is the one that bit: this tool wants a list of cell
+ * addresses to read but not judge, and an e2e harness wrote an object
+ * describing the analysis. The comparison then failed with
+ * "(given.metadata ?? []) is not iterable", which names neither the file nor
+ * the key nor what was expected.
+ */
+const CONFIG_SHAPES: Record<string, { is: (v: unknown) => boolean; want: string }> = {
+  metadata: { is: (v) => Array.isArray(v), want: 'an array of cell addresses or column names' },
+  ignoreSheets: { is: (v) => Array.isArray(v), want: 'an array of sheet names' },
+  cases: { is: (v) => Array.isArray(v), want: 'an array of case names' },
+  sheets: { is: isPlainObject, want: 'an object keyed by sheet name' },
+  defaults: { is: isPlainObject, want: "an object of settings applied to every sheet" },
+  expect: { is: isPlainObject, want: 'an object keyed by sheet name' },
+  label: { is: (v) => typeof v === 'string', want: 'a string' },
+  reportType: { is: (v) => typeof v === 'string', want: 'a string' },
+  analysisType: { is: (v) => typeof v === 'string', want: 'a string' },
+  entityType: { is: (v) => typeof v === 'string', want: 'a string' },
+  strictSheets: { is: (v) => typeof v === 'boolean', want: 'true or false' },
+  matchUnkeyedRowsByPosition: { is: (v) => typeof v === 'boolean', want: 'true or false' },
+};
+
+function isPlainObject(v: unknown): boolean {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** Names every key of this tool's that holds something it cannot read. */
+function wrongShapes(spec: WorkbookSpec): string[] {
+  const out: string[] = [];
+  for (const [key, { is, want }] of Object.entries(CONFIG_SHAPES)) {
+    const v = (spec as Record<string, unknown>)[key];
+    if (v === undefined || is(v)) continue;
+    const got = Array.isArray(v) ? 'an array' : v === null ? 'null'
+      : v === undefined ? 'nothing' : `${/^[aeiou]/.test(typeof v) ? 'an' : 'a'} ${typeof v}`;
+    out.push(`"${key}" should be ${want}, and is ${got}`);
+  }
+  return out;
+}
+
 async function readJson(path: string): Promise<WorkbookSpec | null> {
   let spec: WorkbookSpec;
   try {
@@ -562,8 +638,22 @@ async function readJson(path: string): Promise<WorkbookSpec | null> {
     throw new Error(`${DISPLAY(path)} is not valid JSON: ${(e as Error).message}`);
   }
 
-  // Checked after parsing, and outside the catch, so this reads as what it is
-  // rather than being re-labelled a syntax error.
+  // Checked after parsing, and outside the catch, so these read as what they
+  // are rather than being re-labelled syntax errors.
+  const wrong = wrongShapes(spec);
+  if (wrong.length) {
+    throw new Error(
+      [
+        `${DISPLAY(path)} cannot be read as settings:`,
+        ...wrong.map((w) => `  ${w}`),
+        '',
+        "These are this tool's own key names. A file that describes a case to whatever",
+        'generates it can carry any other field it likes -- only these are read here, so',
+        'rename the clashing one and the rest of the file is left alone.',
+      ].join('\n'),
+    );
+  }
+
   const stray = misplacedSheetSpecs(spec);
   if (stray.length) {
     throw new Error(
@@ -792,8 +882,28 @@ function selects(layers: ConfigLayer[], dir: string): boolean {
  * than as a report type somebody chose, and two unnamed folders stay two
  * groups instead of merging into one heading and one file.
  */
+/**
+ * What a config file calls the kind of thing it holds.
+ *
+ * `reportType` is this tool's name for it, and a generator naturally reaches
+ * for the word its own domain uses: a Conditional EP is an analysis, a Data
+ * Transmittal is an entity. Six of twelve type folders in one tree said
+ * `analysisType` or `entityType` and every one of them was filed under
+ * "Unspecified report type" -- the summary heading that exists to mean nobody
+ * set this, printed over folders where somebody plainly had.
+ */
+const TYPE_KEYS = ['reportType', 'analysisType', 'entityType'] as const;
+
+const typeNamedBy = (spec: WorkbookSpec): string | undefined => {
+  for (const k of TYPE_KEYS) {
+    const v = (spec as Record<string, unknown>)[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return undefined;
+};
+
 function reportTypeOf(spec: WorkbookSpec, root: string, caseDir: string): string {
-  const named = spec.reportType?.trim();
+  const named = typeNamedBy(spec);
   if (named) return named;
   // Empty for a case sitting at the root of the tree, which has no folder
   // above it to name and needs no parenthetical saying so.
@@ -813,7 +923,7 @@ function reportTypeDir(layers: ConfigLayer[], caseDir: string): string {
   for (let i = layers.length - 1; i >= 0; i--) {
     const layer = layers[i]!;
     if (basename(layer.path) === 'case.json') continue;
-    if (layer.spec.reportType?.trim()) return dirname(layer.path);
+    if (typeNamedBy(layer.spec)) return dirname(layer.path);
   }
   return dirname(caseDir);
 }
@@ -1070,11 +1180,28 @@ async function main(): Promise<number> {
   // aside costs nothing, and counted afterwards, so it is never set aside
   // quietly -- a report that stops being checked without anyone noticing is
   // the failure this whole tool exists to prevent.
-  const everything = found;
+  const everything: Case[] = [];
   const selectedBy = new Map<Case, ConfigLayer[]>();
-  for (const c of everything) selectedBy.set(c, await configLayers(root, c.dir));
+  for (const c of found) {
+    try {
+      selectedBy.set(c, await configLayers(root, c.dir));
+      everything.push(c);
+    } catch (e) {
+      // One case's settings are one case's problem. This used to throw out of
+      // the whole run, so a single file another tool happened to write stopped
+      // every other case from being compared -- twenty-six reports unchecked
+      // over one key, and nothing to say which of them would have passed.
+      broken.push(`  ${DISPLAY(relative(root, c.dir))}: ${(e as Error).message}`);
+    }
+  }
   found = everything.filter((c) => selects(selectedBy.get(c)!, c.dir));
   const setAside = everything.length - found.length;
+
+  if (!everything.length && broken.length) {
+    console.error(`sheet-verify: no case could be read under ${target}`);
+    console.error(broken.join('\n'));
+    return 1;
+  }
 
   if (!found.length) {
     const naming = [...new Set(
@@ -1327,8 +1454,12 @@ async function main(): Promise<number> {
 
     try {
       const against = recalculated ? join(c.dir, recalcActual) : c.actual;
-      const result = await runCase(against, c.dir, options);
-      if (!result.blessed && !result.ok) failed++;
+      const result = await runCase(against, c.dir, { ...options, uncompared: c.uncompared });
+      // An artefact nobody compared is a coverage hole, not a difference, and
+      // it fails the case for the same reason a table with no key does: the
+      // verdict has to mean the whole case was checked.
+      const ok = result.ok && !c.uncompared.length;
+      if (!result.blessed && !ok) failed++;
       if (result.blessed && blessTo) await rm(c.golden, { force: true });
 
       const lines: string[] = path ? [path] : [];
@@ -1345,6 +1476,13 @@ async function main(): Promise<number> {
       }
       if (recalculated) lines.push('recalculated by Excel before comparing');
       if (skew) lines.push(`! ${skew}`);
+      // Named in the log as well as the report. A file nobody opened is the
+      // kind of thing that has to interrupt a clean run, or it is discovered
+      // the day somebody asks what the zip was for.
+      if (c.uncompared.length) {
+        lines.push(`! ${c.uncompared.length} file(s) in golden/ or current/ that nothing compared:`);
+        for (const f of c.uncompared) lines.push(`    ${f}`);
+      }
       // Layer 2 does not decide the outcome, but a case that passed while
       // something changed where nobody was looking is the one thing worth
       // interrupting a clean run to say.
@@ -1354,7 +1492,7 @@ async function main(): Promise<number> {
       // run found something, or it found something nobody had asked about.
       // Relative, like every other path in this log -- an absolute one here
       // wrapped the line and buried the block it was meant to close.
-      if (!result.blessed && (!result.ok || gaps)) {
+      if (!result.blessed && (!ok || gaps)) {
         lines.push(DISPLAY(relative(process.cwd(), result.files.report)));
       }
 
@@ -1368,11 +1506,11 @@ async function main(): Promise<number> {
         lines.push(`expectations recorded for ${written} sheet(s) in case.json`);
       }
 
-      console.log(`${result.ok ? '✓' : '✗'} ${head}`);
+      console.log(`${ok ? '✓' : '✗'} ${head}`);
       for (const line of lines) console.log(`    ${line}`);
 
       const compared = result.diff?.sheets.filter((o) => o.status === 'compared') ?? [];
-      const verdict: CaseVerdict = result.blessed ? 'blessed' : result.ok ? 'passed' : 'failed';
+      const verdict: CaseVerdict = result.blessed ? 'blessed' : ok ? 'passed' : 'failed';
       records.push({
         reportType,
         name: c.name,

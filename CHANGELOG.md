@@ -4,6 +4,41 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.13.0 — 2026-09-03
+
+### A file nobody compared no longer reads as a pass
+
+A case held `results.csv`, `details.zip` and `unused.zip` on each side. The run
+compared the CSV, reported **Identical**, and said nothing whatever about the
+other two -- which held a `policy.csv` and an `unused_policy.csv` of real data.
+
+The folder walker filtered to spreadsheets before it looked, so the archives
+were never even seen. Anything in a `golden/` or `current/` folder that no
+comparison read is now named, in the log and in `report.md`, and fails the case:
+a `golden/` folder exists to hold one side's output, and a verdict has to mean
+the whole case was checked.
+
+### One case's settings no longer stop the tree
+
+A generator wrote its own `metadata` -- an object describing the analysis --
+into a `case.json`. This tool's `metadata` is a list of cells to read but not
+judge, so the run died with `(given.metadata ?? []) is not iterable`, naming
+neither the file nor the key. Thirty-six cases, none compared, over one file.
+
+Recognised keys are now checked for shape, with a message naming the file, the
+key, what was found and what was wanted. A key this tool does not recognise is
+still left alone, exactly as before -- a `case.json` is a good place to describe
+a case to whatever generates it. And a case whose settings cannot be read is now
+one broken case, not a dead run.
+
+### analysisType and entityType name a report type too
+
+Six of twelve type folders in one tree said `analysisType` or `entityType`,
+because a Conditional EP is an analysis and a Data Transmittal is an entity.
+Every one of them was filed under *Unspecified report type* -- the heading that
+exists to mean nobody set this, printed over folders where somebody plainly had.
+Both are now read; `reportType` still wins where more than one is set.
+
 ## 1.12.0 — 2026-09-03
 
 ### report.md is the verdict, not the archive

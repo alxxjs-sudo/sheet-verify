@@ -49,6 +49,8 @@ export interface MarkdownOptions {
   detail?: 'capped' | 'full';
   /** Rows shown per finding when capped. */
   detailRows?: number;
+  /** Files beside the pair that nothing compared. See `CaseOptions.uncompared`. */
+  uncompared?: string[];
   /** Separator used in composite keys, replaced with " / " for display. */
   keySeparator?: string;
   /**
@@ -629,6 +631,26 @@ export function formatMarkdownReport(
   if (swept) out.push(...cellCounts(swept));
 
   if (swept) out.push(...assurance(swept, limit !== null));
+
+  // Before the integrity errors, because it is a bigger problem than any of
+  // them: an error says a comparison may be wrong, this says a file was never
+  // opened at all.
+  if (options.uncompared?.length) {
+    out.push('', `## Files nothing compared (${options.uncompared.length})`, '');
+    out.push(
+      "These sit in the case's golden/ or current/ folder and no comparison read",
+      'them. Whatever this report says, it says nothing about these.',
+      '',
+    );
+    for (const f of options.uncompared) out.push(`- ${code(f)}`);
+    out.push(
+      '',
+      'Either give each its own case, so it is compared against its own golden, or',
+      'move it out of the folder. A file kept beside the pair is read as an output',
+      'of the run, and this tool will not report a case as clean while one of its',
+      'outputs has never been opened.',
+    );
+  }
 
   if (diff.errors.length) {
     out.push('', '## Workbook integrity', '', 'These make the result untrustworthy.', '');

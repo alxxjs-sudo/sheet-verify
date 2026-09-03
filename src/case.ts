@@ -67,6 +67,14 @@ export interface CaseOptions extends WorkbookSpec, ReportOptions {
    * outcome -- `ok` is layer 1's verdict alone.
    */
   sweepCells?: boolean;
+  /**
+   * Files beside the pair that no comparison read, relative to the case.
+   *
+   * Reported, never acted on. A case whose golden/ and current/ hold three
+   * files each and whose run compared one of them is not a clean case, and the
+   * report has to say which two it did not open.
+   */
+  uncompared?: string[];
   /** Overwrite the golden output with the new report and pass. */
   updateGolden?: boolean;
   /** Create the golden output from the new report when absent. Default true. */
