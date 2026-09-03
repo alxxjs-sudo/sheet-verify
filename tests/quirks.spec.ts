@@ -887,3 +887,68 @@ test.describe('report shape', () => {
     expect(md).toContain('## What was verified');
   });
 });
+
+/**
+ * Formulas are compared as the tool resolves them, not as Excel writes them.
+ *
+ * A reference becomes `[column name]@row±n`, which is what lets a formula
+ * survive its table moving down the sheet -- and it means two formulas can
+ * differ while their A1 text is character-for-character identical, because the
+ * column one of them points at was renamed. On these reports that happens
+ * whenever a header cell holds a date.
+ */
+test.describe('a formula difference the A1 text cannot show', () => {
+  test('the resolved form is shown where the written form is identical', async () => {
+    // Column B is named for the run date, so it is renamed between runs. The
+    // formula in column C reads it, and its text -- "B2" -- does not change.
+    const golden = await sheet('quirk-formula-resolved-g.xlsx', [
+      ['Region', '2026-09-02', 'Note'],
+      ['North', 100, { formula: 'B2' }],
+    ]);
+    const actual = await sheet('quirk-formula-resolved-a.xlsx', [
+      ['Region', '2026-09-03', 'Note'],
+      ['North', 100, { formula: 'B2' }],
+    ]);
+
+    const { compared, diff } = await runWorkbook(golden, actual, {
+      defaults: { requireCachedValues: false },
+    });
+    const swept = await sweep(golden, actual, compared);
+    const md = formatMarkdownReport(diff, swept, { name: 'formula-resolved' });
+
+    expect(diff.sheets[0]!.diff!.formulas).toHaveLength(1);
+    const f = diff.sheets[0]!.diff!.formulas[0]!;
+    // The premise: written identically, resolved differently.
+    expect(f.baseA1).toBe(f.nextA1);
+    expect(f.base).not.toBe(f.next);
+
+    // So the report must not print the written form twice and call it a
+    // difference -- which is what it used to do.
+    expect(md).toContain('**Formula changes (1)**');
+    expect(md).toContain('[2026-09-02]@row');
+    expect(md).toContain('[2026-09-03]@row');
+    expect(md).toContain('shown as the');
+  });
+
+  test('an ordinary formula change still shows the formula as written', async () => {
+    const golden = await sheet('quirk-formula-written-g.xlsx', [
+      ['Region', 'Gross', 'Note'],
+      ['North', 100, { formula: 'B2*2' }],
+    ]);
+    const actual = await sheet('quirk-formula-written-a.xlsx', [
+      ['Region', 'Gross', 'Note'],
+      ['North', 100, { formula: 'B2*3' }],
+    ]);
+
+    const { compared, diff } = await runWorkbook(golden, actual, {
+      defaults: { requireCachedValues: false },
+    });
+    const swept = await sweep(golden, actual, compared);
+    const md = formatMarkdownReport(diff, swept, { name: 'formula-written' });
+
+    expect(md).toContain('B2*2');
+    expect(md).toContain('B2*3');
+    // No footnote, because nothing needed the resolved form.
+    expect(md).not.toContain('shown as the');
+  });
+});

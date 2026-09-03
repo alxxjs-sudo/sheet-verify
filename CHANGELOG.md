@@ -6,6 +6,24 @@ shapes. Detection changes ship as minors, each saying what to recheck.
 
 ## 1.13.0 — 2026-09-03
 
+### A formula difference that printed the same string twice
+
+Four cases failed on this row, and it says nothing:
+
+    | Row | Column | Cell | Golden | Actual |
+    | #4 | Non-client data | `B5` | `"Exposure Data as of "&TEXT(A1,…)` | `"Exposure Data as of "&TEXT(A1,…)` |
+
+The finding is real. Formulas are compared as the tool resolves them, not as
+Excel writes them -- a reference becomes `[column name]@row±n`, which is what
+lets a formula survive its table moving down the sheet. Here `A1` is the
+report's header cell and it holds the run date, so the column it names is
+called `2026-09-02` in one file and `2026-09-03` in the other. The formula
+points at a renamed column; its text never changed.
+
+The markdown report printed the text. The plain-text report has always fallen
+back to the resolved form when the two agree, and this one now does too, with a
+line saying which it is showing and why.
+
 ### A bare run picks the tree that is there, and asks when there are two
 
 One checkout holds two comparison trees now, one per source system, and that is

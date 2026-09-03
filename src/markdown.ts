@@ -328,11 +328,35 @@ function findings(o: SheetOutcome, sep: string, limit: number | null): string[] 
 
   if (d.formulas.length) {
     out.push('', `**Formula changes (${d.formulas.length})** — the calculation itself differs`, '');
-    const all = d.formulas.map((f) => [
-      key(f.key), cell(f.column), code(f.address), code(f.baseA1), code(f.nextA1),
-    ]);
+
+    // Formulas are compared as the comparison resolves them, not as Excel
+    // writes them: a reference becomes `[column name]@row±n`, which is what
+    // lets a formula survive its table moving down the sheet. So two formulas
+    // can differ while their A1 text is character-for-character identical --
+    // the column a reference points at was renamed, and on these reports that
+    // happens whenever a header cell holds a date.
+    //
+    // Printing the A1 text there put the same string in the Golden and Actual
+    // columns and called it a difference. The plain-text report has always
+    // shown the resolved form in that case; this one now does too.
+    const resolved = d.formulas.some((f) => f.baseA1 === f.nextA1);
+    const all = d.formulas.map((f) => {
+      const same = f.baseA1 === f.nextA1;
+      return [
+        key(f.key), cell(f.column), code(f.address),
+        code(same ? f.base : f.baseA1), code(same ? f.next : f.nextA1),
+      ];
+    });
     const kept = limit === null ? { rows: all, note: [] } : capped(all, limit, DETAIL_FILE);
     out.push(...table(['Row', 'Column', 'Cell', 'Golden', 'Actual'], kept.rows), ...kept.note);
+    if (resolved) {
+      out.push(
+        '',
+        '_Where the formula as written is identical on both sides, it is shown as the_',
+        '_comparison resolves it instead — `[column]@row±n` for a reference. The_',
+        '_difference is then in what a reference points at, not in the text._',
+      );
+    }
   }
 
   const roots = d.values.filter((v) => v.rootCause);
