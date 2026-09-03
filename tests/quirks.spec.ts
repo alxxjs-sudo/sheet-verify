@@ -644,7 +644,42 @@ test.describe('report shape', () => {
     expect(md).not.toContain('| 0 | 0 | **0 (0%)** |');
   });
 
-  test('a wall of differences is summarised by column, and still listed in full', async () => {
+  test('many failing tables are ranked, so the worst is found without scrolling', async () => {
+    // Two sheets, one badly wrong and one barely. Flat, the reader learns
+    // which is which by scrolling to the end of the first.
+    const build = async (name: string, bump: (i: number, c: number) => number) => {
+      await mkdir(DIR, { recursive: true });
+      const wb = new ExcelJS.Workbook();
+      for (const [sheetName, factor] of [['Big', 1], ['Small', 0]] as const) {
+        const ws = wb.addWorksheet(sheetName);
+        ws.addRow(['Key', 'A', 'B', 'C']);
+        for (let i = 0; i < 8; i++) {
+          ws.addRow([`K${i}`, ...[0, 1, 2].map((c) => (factor ? bump(i, c) : (i === 0 && c === 0 ? bump(i, c) : i)))]);
+        }
+      }
+      const file = join(DIR, name);
+      await wb.xlsx.writeFile(file);
+      return file;
+    };
+    // Big differs in all 24 cells, Small in one.
+    const golden = await build('quirk-rank-g.xlsx', (i) => i);
+    const actual = await build('quirk-rank-a.xlsx', (i) => i + 1);
+
+    const { diff } = await runWorkbook(golden, actual, {
+      defaults: { requireCachedValues: false, tolerance: 0 },
+      sheets: { Big: { keyColumns: ['Key'] }, Small: { keyColumns: ['Key'] } },
+    });
+    const md = formatMarkdownReport(diff, null, { name: 'rank' });
+
+    expect(md).toContain('## Where the differences are');
+    // The worst table is named before any of the detail, and above the lesser
+    // one -- which is the whole point of the section.
+    const summary = md.slice(md.indexOf('## Where the differences are'), md.indexOf('## What changed'));
+    expect(summary.indexOf('Big')).toBeGreaterThan(-1);
+    expect(summary.indexOf('Big')).toBeLessThan(summary.indexOf('Small'));
+  });
+
+  test('a wall of differences is summarised by column, capped, and listed in full on request', async () => {
     // A recalculated report drifts in the last digit of every total, so one
     // sheet can carry hundreds of differences of which two matter. Flat, the
     // two are unfindable.
@@ -675,9 +710,21 @@ test.describe('report shape', () => {
     expect(md).toMatch(/\| Gross \| 20 \|/);
     expect(md).toContain('1000000');
 
-    // And nothing was dropped to achieve that.
-    expect(md).toContain('<details><summary>All 20 cells</summary>');
-    for (let i = 1; i <= 20; i++) expect(md).toContain(`R${i}`);
+    // By default the rows are capped: enough to see the shape, and a count of
+    // what was left out so the reader knows what they are not being shown.
+    expect(md).toContain('and 10 more of these');
+    expect(md).toContain('differences.xlsx');
+    for (let i = 1; i <= 10; i++) expect(md).toContain(`R${i}`);
+
+    // The per-column tally is never capped -- it is the part that finds the
+    // million, and it is a handful of lines however many cells there are.
+    expect(md).toMatch(/\| Gross \| 20 \|/);
+
+    // And nothing is lost: asking for it prints every row, as it always did.
+    const full = formatMarkdownReport(diff, null, { name: 'wall', detail: 'full' });
+    expect(full).toContain('<details><summary>All 20 cells</summary>');
+    for (let i = 1; i <= 20; i++) expect(full).toContain(`R${i}`);
+    expect(full).not.toContain('and 10 more of these');
   });
 
   test('cells that will recalculate are named by column, not just by sheet', async () => {

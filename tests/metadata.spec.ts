@@ -266,7 +266,10 @@ test.describe('report metadata', () => {
     const r = await runCase(actual, dir, SPEC);
     const text = await readFile(r.files.report, 'utf8');
 
-    expect(text).toContain('Two-layer verification');
+    // The report says both layers ran. The wording is shorter than it was --
+    // the paragraph explaining what a layer IS moved to the docs, being
+    // identical in every report ever written -- but the claim is still made.
+    expect(text).toContain('Both layers ran over every shared sheet');
     expect(text).toContain('## Not verified, on purpose');
     expect(text).toContain('### Report metadata');
     // The skipped cell is named with both its values, not merely counted.

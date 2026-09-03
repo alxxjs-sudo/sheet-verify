@@ -11,9 +11,22 @@ import type { SweepResult } from './sweep.js';
  * in the order someone reads them: the verdict, then what changed, then what
  * that will do, then what was not covered.
  *
- * Nothing is truncated. A report exists to be complete, and "and 34 more"
- * hides exactly the row someone was looking for. A terminal has a reason to
- * elide; a file does not.
+ * The detail is capped, and that reverses what this file used to say. The old
+ * rule was that nothing is truncated, because "and 34 more" hides exactly the
+ * row somebody wanted. It held right up until a case produced 18,661 lines and
+ * 1.6 MB, 92% of it one section, at which point completeness stopped being a
+ * service: nobody reads that, so in practice everything was hidden rather than
+ * one row.
+ *
+ * What makes capping safe is that the complete record already exists beside
+ * this file and is better at the job. `differences.xlsx` holds one row per
+ * differing cell, sortable and filterable; `compared.xlsx` holds every cell
+ * compared; `diff.json` holds the lot structured. So this stops being the
+ * archive and becomes the verdict -- what happened, how bad, where to look --
+ * with a pointer to the row somebody wanted.
+ *
+ * `detail: 'full'` restores the old behaviour exactly, for anyone who had built
+ * something on it.
  */
 
 export interface MarkdownOptions {
@@ -26,6 +39,16 @@ export interface MarkdownOptions {
   label?: string;
   /** The kind of report being compared, shown beside the case name. */
   reportType?: string;
+  /**
+   * How much of the detail to write out.
+   *
+   * `capped` (the default) shows the first few rows of each finding and names
+   * the file holding the rest. `full` writes every row, as this did before the
+   * reports grew past the point of being read.
+   */
+  detail?: 'capped' | 'full';
+  /** Rows shown per finding when capped. */
+  detailRows?: number;
   /** Separator used in composite keys, replaced with " / " for display. */
   keySeparator?: string;
   /**
@@ -211,6 +234,27 @@ function coverage(s: SheetOutcome): string {
  */
 const GROUP_ABOVE = 12;
 
+/** Rows of a finding written out before the rest is left to the spreadsheet. */
+const DETAIL_ROWS = 10;
+
+/** Where every row lives, named wherever rows are left out. */
+const DETAIL_FILE = '`differences.xlsx`';
+
+/**
+ * Keeps the first few rows and says what it did with the others.
+ *
+ * The count is stated in full and the file naming every one of them is named,
+ * so the reader is never left guessing how much they are not seeing -- which is
+ * the only thing that makes eliding honest.
+ */
+function capped(rows: string[][], limit: number, where: string): { rows: string[][]; note: string[] } {
+  if (rows.length <= limit) return { rows, note: [] };
+  return {
+    rows: rows.slice(0, limit),
+    note: ['', `_… and ${n(rows.length - limit)} more of these — every one is a row in ${where}._`],
+  };
+}
+
 /**
  * The same differences, one row per column instead of one row per cell.
  *
@@ -253,7 +297,7 @@ function byColumn(list: ValueDiff[]): string[] {
 }
 
 /** One compared table's findings. */
-function findings(o: SheetOutcome, sep: string): string[] {
+function findings(o: SheetOutcome, sep: string, limit: number | null): string[] {
   const d = o.diff!;
   const out: string[] = [];
   const key = (k: string) => cell(k.split(sep).join(' / '));
@@ -265,12 +309,11 @@ function findings(o: SheetOutcome, sep: string): string[] {
 
   if (d.formulas.length) {
     out.push('', `**Formula changes (${d.formulas.length})** — the calculation itself differs`, '');
-    out.push(...table(
-      ['Row', 'Column', 'Cell', 'Golden', 'Actual'],
-      d.formulas.map((f) => [
-        key(f.key), cell(f.column), code(f.address), code(f.baseA1), code(f.nextA1),
-      ]),
-    ));
+    const all = d.formulas.map((f) => [
+      key(f.key), cell(f.column), code(f.address), code(f.baseA1), code(f.nextA1),
+    ]);
+    const kept = limit === null ? { rows: all, note: [] } : capped(all, limit, DETAIL_FILE);
+    out.push(...table(['Row', 'Column', 'Cell', 'Golden', 'Actual'], kept.rows), ...kept.note);
   }
 
   const roots = d.values.filter((v) => v.rootCause);
@@ -284,42 +327,50 @@ function findings(o: SheetOutcome, sep: string): string[] {
     out.push('', `**${label}**`, '');
 
     const big = list.length > GROUP_ABOVE;
+    // The per-column tally stays whatever the detail setting is. It is the part
+    // that says which figure moved, and it is a handful of lines however many
+    // cells there are -- so it is the one thing worth keeping in full.
     if (big) out.push(...byColumn(list));
 
-    const rows = table(
-      ['Row', 'Column', 'Cell', 'Golden', 'Actual', 'Delta'],
-      list.map((v) => [
-        key(v.key), cell(v.column), code(v.address), cell(show(v.base)), cell(show(v.next)),
-        v.delta === undefined ? '' : num(v.delta),
-      ]),
-    );
+    const all = list.map((v) => [
+      key(v.key), cell(v.column), code(v.address), cell(show(v.base)), cell(show(v.next)),
+      v.delta === undefined ? '' : num(v.delta),
+    ]);
+    const kept = limit === null ? { rows: all, note: [] } : capped(all, limit, DETAIL_FILE);
+    const rows = [
+      ...table(['Row', 'Column', 'Cell', 'Golden', 'Actual', 'Delta'], kept.rows),
+      ...kept.note,
+    ];
 
-    // Every cell is still here, one per row, exactly as before -- folded away
-    // rather than dropped. A summary that replaced the detail would just be a
-    // slower way of truncating.
-    if (big) out.push('', `<details><summary>All ${n(list.length)} cells</summary>`, '', ...rows, '', '</details>');
-    else out.push(...rows);
+    // Folded away when there are many, and only when every one is present: a
+    // capped list is already short, and hiding ten rows behind a click is a
+    // click for nothing.
+    if (big && limit === null) {
+      out.push('', `<details><summary>All ${n(list.length)} cells</summary>`, '', ...rows, '', '</details>');
+    } else if (big) {
+      out.push('', ...rows);
+    } else {
+      out.push(...rows);
+    }
   }
 
   if (d.types.length) {
     out.push('', `**Type changes (${d.types.length})** — same rendering, different type`, '');
-    out.push(...table(
-      ['Row', 'Column', 'Cell', 'Golden', 'Actual', 'Value'],
-      d.types.map((t) => [
-        key(t.key), cell(t.column), code(t.address), t.baseKind, t.nextKind, cell(show(t.value)),
-      ]),
-    ));
+    const all = d.types.map((t) => [
+      key(t.key), cell(t.column), code(t.address), t.baseKind, t.nextKind, cell(show(t.value)),
+    ]);
+    const kept = limit === null ? { rows: all, note: [] } : capped(all, limit, DETAIL_FILE);
+    out.push(...table(['Row', 'Column', 'Cell', 'Golden', 'Actual', 'Value'], kept.rows), ...kept.note);
   }
 
   if (d.invariants.length) {
     out.push('', `**Invariant failures (${d.invariants.length})** — wrong regardless of the golden`, '');
-    out.push(...table(
-      ['Invariant', 'Row', 'Column', 'Cell', 'Detail'],
-      d.invariants.map((i) => [
-        cell(i.invariant), i.key ? key(i.key) : '', cell(i.column ?? ''),
-        code(i.address), cell(i.detail),
-      ]),
-    ));
+    const all = d.invariants.map((i) => [
+      cell(i.invariant), i.key ? key(i.key) : '', cell(i.column ?? ''),
+      code(i.address), cell(i.detail),
+    ]);
+    const kept = limit === null ? { rows: all, note: [] } : capped(all, limit, DETAIL_FILE);
+    out.push(...table(['Invariant', 'Row', 'Column', 'Cell', 'Detail'], kept.rows), ...kept.note);
   }
 
   const { added, removed, moved } = d.schema;
@@ -332,12 +383,17 @@ function findings(o: SheetOutcome, sep: string): string[] {
 
   if (d.rows.added.length || d.rows.removed.length) {
     out.push('', '**Row population**', '');
-    if (d.rows.added.length) {
-      out.push(`- ${d.rows.added.length} added: ${d.rows.added.map((k) => code(key(k))).join(', ')}`);
-    }
-    if (d.rows.removed.length) {
-      out.push(`- ${d.rows.removed.length} removed: ${d.rows.removed.map((k) => code(key(k))).join(', ')}`);
-    }
+    // Keys run onto one line, so a few thousand of them is a few thousand
+    // characters of it. The count leads; the names follow as far as they are
+    // useful.
+    const listed = (what: string, keys: string[]) => {
+      const shown = limit === null ? keys : keys.slice(0, limit);
+      const names = shown.map((k) => code(key(k))).join(', ');
+      const rest = keys.length - shown.length;
+      out.push(`- ${n(keys.length)} ${what}: ${names}${rest > 0 ? `, and ${n(rest)} more` : ''}`);
+    };
+    if (d.rows.added.length) listed('added', d.rows.added);
+    if (d.rows.removed.length) listed('removed', d.rows.removed);
   }
 
   const repeated = [...new Set([...d.rows.duplicateKeysBase, ...d.rows.duplicateKeysNext])];
@@ -362,11 +418,33 @@ function findings(o: SheetOutcome, sep: string): string[] {
  * fraction only means something once the reader knows there are two layers
  * with different reach, so this says that first and quantifies second.
  */
-function assurance(s: SweepResult): string[] {
+function assurance(s: SweepResult, brief: boolean): string[] {
   const oneSided = s.sheets.filter((x) => x.status !== 'swept');
   const oneSidedCells = oneSided.reduce((t, x) => t + x.cells, 0);
   const judged = Math.max(s.cellsSwept - s.metadata.length, 0);
   const byAddress = Math.max(judged - s.cellsCompared, 0);
+
+  // The paragraph explaining what the two layers are is identical in every
+  // report ever written, so after the first one it is thirteen lines between
+  // the reader and the findings. The numbers are not identical and stay; the
+  // explanation moves to the place explanations belong.
+  if (brief) {
+    const out = [
+      '',
+      `**Both layers ran over every shared sheet.** ${n(s.cellsCompared)} cells by name and key, `
+      + `${n(judged)} by address, of which ${n(byAddress)} rest on the address layer alone. `
+      + 'Between them, every cell on a sheet both files share was compared.',
+    ];
+    const parts: string[] = [];
+    if (oneSidedCells > 0) {
+      parts.push(`${n(oneSidedCells)} cells sit on ${n(oneSided.length)} sheet(s) only one file has`);
+    }
+    if (s.metadata.length) parts.push(`${n(s.metadata.length)} cells of report metadata read but not judged`);
+    if (s.totalTolerated > 0) parts.push(`${n(s.totalTolerated)} cells inside the tolerance set for their column`);
+    if (parts.length) out.push('', `${parts.join('; ')} — each listed below.`);
+    out.push('', '_What the two layers are, and how to read the rest: `docs/reading-a-report.md`._');
+    return out;
+  }
 
   const out = ['', '**Two-layer verification — both layers ran over every shared sheet.**', ''];
   out.push(
@@ -493,6 +571,9 @@ export function formatMarkdownReport(
 ): string {
   const sep = options.keySeparator ?? '␟';
   const out: string[] = [];
+  // null means "write every row", which is what this did before the reports
+  // grew past the point of being read.
+  const limit = options.detail === 'full' ? null : (options.detailRows ?? DETAIL_ROWS);
 
   const compared = diff.sheets.filter((s) => s.status === 'compared');
   const failed = compared.filter((s) => !s.diff!.ok);
@@ -547,7 +628,7 @@ export function formatMarkdownReport(
   // a table of its own rather than a row in the middle of the file paths.
   if (swept) out.push(...cellCounts(swept));
 
-  if (swept) out.push(...assurance(swept));
+  if (swept) out.push(...assurance(swept, limit !== null));
 
   if (diff.errors.length) {
     out.push('', '## Workbook integrity', '', 'These make the result untrustworthy.', '');
@@ -561,6 +642,26 @@ export function formatMarkdownReport(
   }
 
   if (failed.length) {
+    // Which sheets, and how badly, before any of the detail. With forty tables
+    // in a report the first question is always "where is the damage", and the
+    // old layout answered it only by scrolling until the tables stopped.
+    if (failed.length > 1) {
+      const size = (o: SheetOutcome) => {
+        const d = o.diff!;
+        return d.formulas.length + d.values.length + d.types.length + d.invariants.length;
+      };
+      const worst = [...failed].sort((a, b) => size(b) - size(a));
+      out.push('', '## Where the differences are', '');
+      out.push(...table(
+        ['Sheet · table', 'Findings'],
+        worst.slice(0, 10).map((o) => [cell(o.label), n(size(o))]),
+        ['left', 'right'],
+      ));
+      if (worst.length > 10) {
+        out.push('', `_… and ${n(worst.length - 10)} more table(s), each with a section below._`);
+      }
+    }
+
     out.push('', '## What changed', '');
     for (const s of failed) {
       out.push('', `### ${cell(s.label)}`);
@@ -572,7 +673,7 @@ export function formatMarkdownReport(
       // anything here: the same three columns in the same place under every
       // heading is what makes them comparable at a glance.
       if (swept) out.push(...tableCounts(s, swept));
-      out.push(...findings(s, sep));
+      out.push(...findings(s, sep, limit));
     }
   }
 
@@ -635,7 +736,13 @@ export function formatMarkdownReport(
       out.push('', `${NO_COLUMN} — outside any table that was compared by name, so no header names it.`);
     }
 
-    if (groupRows.some((g) => g.cells.length > SPAN_ABOVE)) {
+    // The full address dump runs to thousands of cells on a single line, and it
+    // is already a sheet of differences.xlsx. The per-column tally above says
+    // which figure is about to change, which is the question anyone reading
+    // this actually has.
+    if (limit !== null) {
+      out.push('', `_Every one of the ${n(swept.affected.length)} addresses is a row in ${DETAIL_FILE}._`);
+    } else if (groupRows.some((g) => g.cells.length > SPAN_ABOVE)) {
       out.push('', `<details><summary>All ${n(swept.affected.length)} cells</summary>`, '');
       for (const g of groupRows) {
         out.push('', `**${cell(g.sheet)} · ${cell(g.column)}** (${n(g.cells.length)})`, '');
@@ -661,12 +768,11 @@ export function formatMarkdownReport(
     for (const sheet of sheetsWithGaps) {
       const mine = gaps.filter((d) => d.sheet === sheet);
       out.push('', `**${cell(sheet)}** — ${n(mine.length)} cell(s)`, '');
-      out.push(...table(
-        ['Cell', 'Golden', 'Actual', 'Why'],
-        mine.map((d) => [
-          code(d.address), cell(d.base || BLANK), cell(d.next || BLANK), d.reason ?? '',
-        ]),
-      ));
+      const all = mine.map((d) => [
+        code(d.address), cell(d.base || BLANK), cell(d.next || BLANK), d.reason ?? '',
+      ]);
+      const kept = limit === null ? { rows: all, note: [] } : capped(all, limit, DETAIL_FILE);
+      out.push(...table(['Cell', 'Golden', 'Actual', 'Why'], kept.rows), ...kept.note);
     }
   }
 
@@ -688,15 +794,18 @@ export function formatMarkdownReport(
     for (const sheet of sheetsWithTolerated) {
       const mine = swept.tolerated.filter((d) => d.sheet === sheet);
       out.push('', `**${cell(sheet)}** — ${n(mine.length)} cell(s)`, '');
-      out.push(...table(
-        ['Cell', 'Golden', 'Actual', 'Gap'],
-        mine.map((d) => [
-          code(d.address),
-          cell(d.base || BLANK),
-          cell(d.next || BLANK),
-          gapBetween(d.base, d.next),
-        ]),
-      ));
+      const all = mine.map((d) => [
+        code(d.address),
+        cell(d.base || BLANK),
+        cell(d.next || BLANK),
+        gapBetween(d.base, d.next),
+      ]);
+      // `all` is the ledger scope that puts these in the spreadsheet; the
+      // default one leaves them out, so the file to open is named accordingly.
+      const kept = limit === null
+        ? { rows: all, note: [] }
+        : capped(all, limit, '`differences.xlsx` when run with `--ledger all`');
+      out.push(...table(['Cell', 'Golden', 'Actual', 'Gap'], kept.rows), ...kept.note);
     }
     out.push('', '</details>');
   }

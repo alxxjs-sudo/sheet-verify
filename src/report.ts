@@ -8,6 +8,20 @@ export interface ReportOptions {
   /** Show cascaded (non-root-cause) value differences. Default false. */
   showCascades?: boolean;
   /**
+   * How much per-finding detail `report.md` writes out.
+   *
+   * `capped` (the default) shows the first few rows of each finding and names
+   * the file holding the rest. `full` writes every row -- what this did before
+   * a case produced 18,661 lines and 1.6 MB, 92% of it one section.
+   *
+   * Counts, per-column tallies and the list of affected sheets are complete
+   * either way; it is only the row-by-row listings that are shortened, and
+   * every one of those rows is already in `differences.xlsx`.
+   */
+  detail?: 'capped' | 'full';
+  /** Rows shown per finding when capped. Default 10. */
+  detailRows?: number;
+  /**
    * Both files were recalculated by Excel before comparison. Reported, never
    * acted on -- it changes what the comparison could see, so it belongs at the
    * top of the report rather than in the command someone ran last week.

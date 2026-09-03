@@ -61,6 +61,8 @@ interface Args {
   writeMeta: boolean;
   writeExpect: boolean;
   ledger: LedgerScope;
+  /** How much per-finding detail report.md writes out. */
+  detail: 'capped' | 'full';
   sweep: boolean;
   bare: boolean;
   help: boolean;
@@ -75,7 +77,7 @@ interface Args {
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     target: '', bless: false, printSpec: false, writeMeta: false, writeExpect: false,
-    ledger: 'differences', sweep: true, bare: false, help: false,
+    ledger: 'differences', detail: 'capped', sweep: true, bare: false, help: false,
     recalc: false, results: RESULT_DIR, summaryOnly: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -93,6 +95,8 @@ function parseArgs(argv: string[]): Args {
     else if (a.startsWith('--results=')) args.results = a.slice(10);
     else if (a === '--ledger') args.ledger = argv[++i] as LedgerScope;
     else if (a.startsWith('--ledger=')) args.ledger = a.slice(9) as LedgerScope;
+    else if (a === '--detail') args.detail = argv[++i] as 'capped' | 'full';
+    else if (a.startsWith('--detail=')) args.detail = a.slice(9) as 'capped' | 'full';
     else if (!a.startsWith('-')) args.target ||= a;
   }
   return args;
@@ -224,6 +228,13 @@ OPTIONS
   --write-expect     record what each case verified into its case.json, so a
                      table that later stops being compared fails the run
   --ledger <scope>   all | differences | none      (default: differences)
+  --detail <level>   capped | full                  (default: capped)
+                     How much per-finding detail report.md writes out. Capped
+                     shows the first ten rows of each finding and names the
+                     file holding the rest; the counts and the per-column
+                     tallies are always complete. Use full when you want every
+                     row in the markdown -- one case ran to 18,661 lines and
+                     1.6 MB, which is why it is no longer the default.
   --no-sweep         skip layer 2. Saves a second parse of both files
   --recalc           have Excel work the formulas out before comparing. These
                      reports arrive with formulas and no stored results, so
@@ -1257,6 +1268,7 @@ async function main(): Promise<number> {
       ...spec,
       label,
       cellLedger: args.ledger,
+      detail: args.detail,
       sweepCells: args.sweep,
       updateGolden: args.bless,
       names: {

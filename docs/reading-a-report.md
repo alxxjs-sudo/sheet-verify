@@ -52,8 +52,8 @@ replaced, so the golden's name never claims a download it no longer holds:
 
 The read, and the one file to start from. Ordered so the most actionable thing
 is first: what was verified, then integrity problems, then removed sheets, then
-each failing table in full, then what layer 1 could not reach, then everything
-merely worth reviewing.
+**where the differences are**, then each failing table, then what layer 1 could
+not reach, then everything merely worth reviewing.
 
 ```markdown
 # geography rebuilt: 851 cells restated across the breakdown
@@ -67,23 +67,54 @@ _Comparison Report · case_001_
 | tables compared | 24, 3 by row position |
 | cells differing | 894 |
 
-**Two-layer verification — both layers ran over every shared sheet.**
+**Both layers ran over every shared sheet.** 12,904 cells by name and key,
+15,117 by address, of which 2,213 rest on the address layer alone.
 
-- **Layer 1, by name and key** — 12,904 cells, across tables whose columns were
-  paired by header name and rows by the values that identify them.
-- **Layer 2, by address** — 15,117 cells, every one in both files compared A1
-  against A1 … 2,213 cells rest on this layer alone.
+## Where the differences are
+
+| Sheet · table | Findings |
+| --- | ---: |
+| Geography · Table 2 | 851 |
+| Premium · Table 1 | 43 |
 
 ## What changed
 
 ### Geography · Table 2
 
 **Value changes (851)** — grouped by column, largest group first …
+
+_… and 841 more of these — every one is a row in `differences.xlsx`._
 ```
 
-Sections that would otherwise run to walls of rows are grouped by column and
-folded behind a `Show` toggle; sheet-by-sheet blocks carry their own counts.
-Nothing is truncated — a terminal has a reason to elide, a file does not.
+### How much detail
+
+The row-by-row listings are **capped** at ten rows each, and every listing says
+how many it left out and which file holds them.
+
+That reverses what this used to say. The old rule was that nothing is truncated,
+because *"and 34 more"* hides exactly the row somebody wanted. It held right up
+until a case produced **18,661 lines and 1.6 MB**, 92% of it a single section —
+at which point completeness stopped being a service. Nobody reads that, so in
+practice everything was hidden rather than one row.
+
+What makes capping safe is that the complete record already sits beside the
+file and is better at the job:
+
+| file | holds |
+| --- | --- |
+| `differences.xlsx` | one row per differing cell, sortable and filterable |
+| `compared.xlsx` | every cell compared, a worksheet per table |
+| `diff.json` | the lot, structured |
+
+Never capped, whatever the setting: the counts, the per-column tallies (the
+part that says *which figure moved*), and the list of tables ranked by how much
+each one differs.
+
+```bash
+sheet-verify --detail=full   # every row in the markdown, as it was before
+```
+
+The same case is 18,661 lines at `full` and 1,212 at the default.
 
 ## diff.json
 

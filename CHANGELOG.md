@@ -4,6 +4,35 @@ Versions follow the policy in [the README](README.md#versioning): a major is
 reserved for changes to configuration keys, CLI flags, exports and artefact
 shapes. Detection changes ship as minors, each saying what to recheck.
 
+## 1.12.0 — 2026-09-03
+
+### report.md is the verdict, not the archive
+
+One case produced 18,661 lines and 1.6 MB, 92% of it a single section. The rule
+that got it there was deliberate and written down: nothing is truncated, because
+"and 34 more" hides exactly the row somebody wanted.
+
+It held right up until the file stopped being read. Nobody opens 1.6 MB of
+markdown, so in practice everything was hidden rather than one row -- and the
+complete record already sat beside it, in a form better suited to the job:
+`differences.xlsx` holds one row per differing cell, sortable and filterable,
+`compared.xlsx` holds every cell compared, `diff.json` holds the lot structured.
+
+So the row-by-row listings are now capped at ten, each saying how many it left
+out and which file holds them. The same case is 1,212 lines.
+
+Never capped, whatever the setting: the counts, the per-column tallies -- the
+part that says which figure moved -- and a new **Where the differences are**
+table ranking every failing table by how much it differs. On the case above that
+one table says 16,099 of 16,990 findings are in a single sheet, which the old
+layout answered only by scrolling until the sections stopped.
+
+The paragraph explaining what the two layers are is identical in every report
+ever written, so it moves to `docs/reading-a-report.md` and the numbers stay.
+That reclaims thirteen lines between the reader and the findings.
+
+`--detail full` restores the old output exactly, for anyone who built on it.
+
 ## 1.11.1 — 2026-08-31
 
 ### A table that failed on errors now says so

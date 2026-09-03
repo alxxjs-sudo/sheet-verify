@@ -11,6 +11,7 @@ npx sheet-verify --print-spec         # show what was detected, as JSON
 npx sheet-verify --write-meta <type>  # write a starting meta.json for a report type
 npx sheet-verify --write-expect       # record what each case verified, as a guard
 npx sheet-verify --ledger all         # record matching cells too
+npx sheet-verify --detail full        # every row in report.md, not the first ten
 npx sheet-verify --help
 ```
 
