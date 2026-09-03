@@ -12,7 +12,7 @@
  * beside a golden file -- the two inputs and any config are never touched, and
  * neither is a folder called `results` somewhere else in the tree.
  *
- *   npm run clean            clear ./output_comparison
+ *   npm run clean            clear the tree here; names them if there are two
  *   npm run clean -- --dry   list what would go, delete nothing
  *   npm run clean -- path/to/cases
  */
@@ -21,6 +21,13 @@ import { existsSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 
 const DEFAULT_ROOT = 'output_comparison';
+/**
+ * The roots a bare clean will look for, matching the compare CLI. A checkout
+ * holds one tree per source system, and where several are present this asks
+ * rather than choosing -- deleting the wrong tree's results is worse than
+ * deleting none.
+ */
+const DEFAULT_ROOTS = [DEFAULT_ROOT, 'edison_output_comparison', 'catwb_output_comparison'];
 const RESULT_DIR = 'results';
 /** Summaries: one at the tree root, and one inside each report type's folder. */
 const SUMMARY_DIR = '!summary';
@@ -28,7 +35,14 @@ const SUMMARY_DIR = '!summary';
 
 const args = process.argv.slice(2);
 const dry = args.some((a) => a === '--dry' || a === '--dry-run');
-const root = resolve(args.find((a) => !a.startsWith('-')) ?? DEFAULT_ROOT);
+const namedRoot = args.find((a) => !a.startsWith('-'));
+const here = DEFAULT_ROOTS.filter((name) => existsSync(resolve(name)));
+if (!namedRoot && here.length > 1) {
+  console.error(`sheet-verify: ${here.length} comparison trees here. Name the one to clean:`);
+  for (const one of here) console.error(`  npm run clean -- ${one}`);
+  process.exit(1);
+}
+const root = resolve(namedRoot ?? here[0] ?? DEFAULT_ROOT);
 /**
  * A run started with `--results <name>` writes somewhere else, and those
  * folders go just as stale as the default one. Naming it here means a clean
