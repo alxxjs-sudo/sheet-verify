@@ -644,6 +644,33 @@ test.describe('report shape', () => {
     expect(md).not.toContain('| 0 | 0 | **0 (0%)** |');
   });
 
+  test('a clean verdict over a large sweep count says why it is not a contradiction', async () => {
+    // The same rows in a different order. Layer 1 pairs by key and finds
+    // nothing; layer 2 compares by address and finds everything. Seen on a real
+    // 8,476-row CSV: verdict "Identical", and a table reading 50,274 differing,
+    // 100% above tolerance, directly underneath it.
+    const rows: Row[] = [['Key', 'A']];
+    for (let i = 1; i <= 12; i++) rows.push([`K${i}`, i * 10]);
+    const golden = await sheet('quirk-order-g.xlsx', rows);
+    const shuffled: Row[] = [rows[0]!, ...rows.slice(1).reverse()];
+    const actual = await sheet('quirk-order-a.xlsx', shuffled);
+
+    const spec: WorkbookSpec = {
+      defaults: { requireCachedValues: false },
+      sheets: { Data: { keyColumns: ['Key'] } },
+    };
+    const { diff } = await runWorkbook(golden, actual, spec);
+    const swept = await sweep(golden, actual, [], { spec });
+    const md = formatMarkdownReport(diff, swept, { name: 'order' });
+
+    expect(diff.ok).toBe(true);
+    expect(md).toContain('**Identical.**');
+    // The count is still shown -- it is true -- but it no longer reads as the
+    // report disagreeing with itself.
+    expect(md).toContain('what moved *position*, not what changed');
+    expect(md).toContain('Layer 2 never decides the verdict');
+  });
+
   test('many failing tables are ranked, so the worst is found without scrolling', async () => {
     // Two sheets, one badly wrong and one barely. Flat, the reader learns
     // which is which by scrolling to the end of the first.

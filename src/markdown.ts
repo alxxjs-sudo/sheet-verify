@@ -93,7 +93,7 @@ const BLANK = '_(blank)_';
  * the line named on the column that used it -- so the figure everyone acts on
  * can be read without scrolling and without arithmetic.
  */
-function cellCounts(s: SweepResult): string[] {
+function cellCounts(s: SweepResult, layer1Clean: boolean): string[] {
   const above = s.totalDifferences;
   const total = above + s.totalTolerated;
 
@@ -111,7 +111,7 @@ function cellCounts(s: SweepResult): string[] {
     : applied.length === 1 ? ` (±${num(applied[0]!)})`
       : ` (±${num(applied[0]!)}–${num(applied[applied.length - 1]!)})`;
 
-  return [
+  const out = [
     '',
     '**Cells that differ**',
     '',
@@ -119,6 +119,23 @@ function cellCounts(s: SweepResult): string[] {
     '| ---: | ---: | ---: |',
     `| ${n(total)} | ${n(s.totalTolerated)} | **${n(above)} (${pct})** |`,
   ];
+
+  // These are layer 2's numbers, and layer 2 compares by address. A file whose
+  // rows arrive in a different order is identical to layer 1, which pairs by
+  // key, and wall-to-wall different to layer 2, which does not -- so a clean
+  // verdict over a six-figure count is correct and reads as a contradiction.
+  // Seen on a CSV of 8,476 rows that both files held, reordered: layer 1 found
+  // nothing, and this table said 50,274 differing, 100% above tolerance.
+  if (layer1Clean && above > 0) {
+    out.push(
+      '',
+      `These are layer 2's, counted by address. Layer 1 paired every row by its key `
+      + 'and found nothing, so this is what moved *position*, not what changed — rows '
+      + 'in a different order differ at every address while being the same rows. '
+      + 'Layer 2 never decides the verdict, which is why this case passes.',
+    );
+  }
+  return out;
 }
 
 /**
@@ -628,7 +645,7 @@ export function formatMarkdownReport(
 
   // The count of what differs is the reason anyone opened the file, so it gets
   // a table of its own rather than a row in the middle of the file paths.
-  if (swept) out.push(...cellCounts(swept));
+  if (swept) out.push(...cellCounts(swept, diff.ok));
 
   if (swept) out.push(...assurance(swept, limit !== null));
 

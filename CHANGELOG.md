@@ -6,6 +6,23 @@ shapes. Detection changes ship as minors, each saying what to recheck.
 
 ## 1.13.0 — 2026-09-03
 
+### A clean verdict over a six-figure count no longer reads as a contradiction
+
+A report opened with **Identical.** and then, four lines down:
+
+    | total | within tolerance | above tolerance |
+    | 50,274 | 0 | **50,274 (100%)** |
+
+Both are true. The counts are layer 2's, and layer 2 compares by address: an
+8,476-row CSV that both files held with the rows in a different order is
+identical to layer 1, which pairs by key, and wall-to-wall different to layer 2,
+which does not. Layer 2 never decides the verdict, so the case passes -- but
+nobody reading that table would have believed it.
+
+The table now says so where the two disagree, and only there.
+
+## 1.13.0 — 2026-09-03
+
 ### A file nobody compared no longer reads as a pass
 
 A case held `results.csv`, `details.zip` and `unused.zip` on each side. The run
