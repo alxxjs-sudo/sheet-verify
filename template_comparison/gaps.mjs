@@ -1,7 +1,7 @@
 /**
  * What the captured cases have never exercised.
  *
- *   npm run gaps:templates              across ./comparison/templates
+ *   npm run gaps:templates              across ./edison_output_comparison/templates
  *   npm run gaps:templates -- <folder>  across somewhere else
  *
  * A green run says the cases that exist all pass. It says nothing about the
@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 import { openTemplate, resolveVariant, folders } from './compare.mjs';
 
 const args = process.argv.slice(2);
-const ROOT = args.find((a) => !a.startsWith('-')) ?? 'comparison/templates';
+const ROOT = args.find((a) => !a.startsWith('-')) ?? 'edison_output_comparison/templates';
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 
 const dirs = async (p) =>

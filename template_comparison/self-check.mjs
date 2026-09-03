@@ -1,7 +1,7 @@
 /**
  * Checks the checks, by breaking a template on purpose.
  *
- *   npm run check:templates              against ./comparison/templates
+ *   npm run check:templates              against ./edison_output_comparison/templates
  *   npm run check:templates -- <folder>  against somewhere else
  *
  * A comparison that reports nothing is either a clean template or a broken
@@ -27,7 +27,7 @@ import ExcelJS from 'exceljs';
 import { compareCase, resolveVariant, openTemplate, folders } from './compare.mjs';
 
 const args = process.argv.slice(2);
-const ROOT = args.find((a) => !a.startsWith('-')) ?? 'comparison/templates';
+const ROOT = args.find((a) => !a.startsWith('-')) ?? 'edison_output_comparison/templates';
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 
 const dirs = async (p) =>

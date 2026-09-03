@@ -2,7 +2,7 @@
  * Verifies downloaded templates against the request and the screen that
  * produced them.
  *
- *   npm run compare:templates              verify ./comparison/templates
+ *   npm run compare:templates              verify ./edison_output_comparison/templates
  *   npm run compare:templates -- <folder>  verify somewhere else
  *   npm run bless:templates                take the current downloads as the contract
  *   npm run clean:templates                clear the results folders
@@ -18,7 +18,7 @@
  *
  * The tree, with a folder per template kind and a folder per case:
  *
- *   comparison/templates/
+ *   edison_output_comparison/templates/
  *     program_selection_template/
  *       <case>/
  *         current/template.xlsx       what the app produced
@@ -41,7 +41,7 @@ import { report } from './report.mjs';
 const args = process.argv.slice(2);
 const CLEAN = args.includes('--clean');
 const BLESS = args.includes('--bless');
-const ROOT = args.find((a) => !a.startsWith('-')) ?? 'comparison/templates';
+const ROOT = args.find((a) => !a.startsWith('-')) ?? 'edison_output_comparison/templates';
 // fileURLToPath and not `.pathname`, which is percent-encoded: a checkout under
 // a folder named "OneDrive - MMC" gave a HERE of "OneDrive%20-%20MMC", so no
 // descriptor was ever found and every kind was reported as one nobody wrote.

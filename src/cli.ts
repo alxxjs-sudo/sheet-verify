@@ -31,6 +31,35 @@ const DEFAULT_ROOT = 'output_comparison';
 const RESULT_DIR = 'results';
 
 /**
+ * The roots a bare run will look for, in order.
+ *
+ * One checkout can hold more than one tree, and it should: two systems'
+ * reports carry different run identity and different tolerances, and the root
+ * `meta.json` is where that is written down. Merge them under one root and one
+ * system's rules land on the other's reports -- the same nine cases, compared
+ * against the same goldens, read "No defects" under one root and "Differences
+ * found" under the other, on a build-number cell that one tree knows to set
+ * aside and the other does not.
+ *
+ * So the trees sit side by side, and a bare run takes the one that is there.
+ * Where several are, it asks instead of choosing: with two trees no default is
+ * right, and silently running the wrong one produces a green run that means
+ * nothing.
+ */
+const DEFAULT_ROOTS = [DEFAULT_ROOT, 'edison_output_comparison', 'catwb_output_comparison'];
+
+/** Which of the default roots exist here. */
+async function rootsPresent(): Promise<string[]> {
+  const found: string[] = [];
+  for (const name of DEFAULT_ROOTS) {
+    try {
+      if ((await stat(resolve(name))).isDirectory()) found.push(name);
+    } catch { /* not in this checkout */ }
+  }
+  return found;
+}
+
+/**
  * Where the run summary goes, at the root of whatever was run.
  *
  * The name is chosen to sort first, because this is the first thing anyone
@@ -108,7 +137,10 @@ sheet-verify — compare a generated report against a golden output
 USAGE
   sheet-verify [folder] [options]
 
-  With no folder, looks in ./${DEFAULT_ROOT} and runs every case beneath it.
+  With no folder, looks for a comparison tree here -- ${DEFAULT_ROOTS.join(', ')} --
+  and runs every case beneath the one it finds. Where more than one is present
+  it names them and stops, since each carries its own root meta.json and
+  running one is not a stand-in for running the other.
   Give any folder to run only what is under that one.
 
 LAYOUT
@@ -1139,7 +1171,20 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  const target = resolve(args.target || DEFAULT_ROOT);
+  let named = args.target;
+  if (!named) {
+    const here = await rootsPresent();
+    if (here.length > 1) {
+      console.error(`sheet-verify: ${here.length} comparison trees here. Name the one to run:`);
+      for (const root of here) console.error(`  npm run compare -- ${root}`);
+      console.error('\nEach carries its own root meta.json — its own run identity and');
+      console.error('tolerances — so running one is not a stand-in for running the other.');
+      return 1;
+    }
+    named = here[0] ?? DEFAULT_ROOT;
+  }
+
+  const target = resolve(named);
   try {
     await stat(target);
   } catch {

@@ -23,6 +23,15 @@ examples/cli-cases/
 output_comparison/
 output-comparison/
 
+# The same trees after they were split by source and flattened: one root per
+# system, no wrapper folder repeating its own name. Listed here before the
+# folders were created, not after -- see the note above about the hyphenated
+# folder that sat uncovered for an afternoon.
+edison_output_comparison/
+edison-output-comparison/
+catwb_output_comparison/
+catwb-output-comparison/
+
 # The same rule, for the trees that hold the reports themselves. These are not
 # on every machine, which is exactly why they are listed before one appears:
 # a folder becomes visible to git the moment it lands, not the moment somebody

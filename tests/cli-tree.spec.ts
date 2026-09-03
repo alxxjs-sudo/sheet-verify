@@ -927,3 +927,60 @@ test.describe('a tree of report types', () => {
     expect(out).toMatch(/2 cases?,/);
   });
 });
+
+/**
+ * Picking a root when no folder is given.
+ *
+ * A checkout can hold more than one comparison tree, and each carries its own
+ * root `meta.json`: its own run identity and its own tolerances. Running the
+ * wrong one is not a near miss -- the same case against the same golden reads
+ * "No defects" under one root and "Differences found" under another, over a
+ * build number one tree sets aside and the other does not. So a bare run takes
+ * the single tree that is there, and asks when there are two.
+ */
+test.describe('choosing a root with no folder given', () => {
+  const CLI = join(process.cwd(), 'dist', 'cli.js');
+  const bare = (cwd: string) => {
+    const r = spawnSync('node', [CLI], { encoding: 'utf8', cwd });
+    return { out: `${r.stdout ?? ''}${r.stderr ?? ''}`, code: r.status };
+  };
+  const HOME = join(DIR, 'roots');
+
+  test('one tree present is the one that runs', async () => {
+    const cwd = join(HOME, 'one');
+    await rm(cwd, { recursive: true, force: true });
+    await mkdir(join(cwd, 'catwb_output_comparison'), { recursive: true });
+
+    const { out } = bare(cwd);
+    // It reached that folder rather than the compiled-in default, and failed
+    // for the honest reason: nothing to compare in it yet.
+    expect(out).toContain('catwb_output_comparison');
+    expect(out).not.toContain('comparison trees here');
+  });
+
+  test('two trees present are named rather than one being guessed', async () => {
+    const cwd = join(HOME, 'two');
+    await rm(cwd, { recursive: true, force: true });
+    await mkdir(join(cwd, 'edison_output_comparison'), { recursive: true });
+    await mkdir(join(cwd, 'catwb_output_comparison'), { recursive: true });
+
+    const { out, code } = bare(cwd);
+    expect(code).toBe(1);
+    expect(out).toContain('2 comparison trees here');
+    expect(out).toContain('npm run compare -- edison_output_comparison');
+    expect(out).toContain('npm run compare -- catwb_output_comparison');
+    // And it says why it will not choose, so the answer is not "pick one".
+    expect(out).toContain('own root meta.json');
+  });
+
+  test('no tree at all still says how to make one', async () => {
+    const cwd = join(HOME, 'none');
+    await rm(cwd, { recursive: true, force: true });
+    await mkdir(cwd, { recursive: true });
+
+    const { out, code } = bare(cwd);
+    expect(code).toBe(1);
+    expect(out).toContain('no such folder');
+    expect(out).toContain('output_comparison/case_001/golden.xlsx');
+  });
+});

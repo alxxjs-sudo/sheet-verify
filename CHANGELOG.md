@@ -6,6 +6,31 @@ shapes. Detection changes ship as minors, each saying what to recheck.
 
 ## 1.13.0 — 2026-09-03
 
+### A bare run picks the tree that is there, and asks when there are two
+
+One checkout holds two comparison trees now, one per source system, and that is
+the right shape: each carries its own root `meta.json` — its own run identity,
+its own tolerances — and merging them applies one system's rules to the other's
+reports.
+
+The cost of getting it wrong is not a near miss. The same nine cases, the same
+goldens, compared under the two roots:
+
+    edison_output_comparison/…/us-cat-and-risk-air-tsv12-market  No defects.
+    catwb_output_comparison/…/us-cat-and-risk-air-tsv12-market   Differences found.
+
+One cell apart — `Edison Build`, `20260901.4120.1` → `20260902.4135.1` — which
+the Edison root sets aside as run identity and the CATWB root has never heard
+of.
+
+So a bare `npm run compare` now looks for `output_comparison`,
+`edison_output_comparison` and `catwb_output_comparison`, runs the one it
+finds, and where more than one is present names them and stops rather than
+choosing. A silently-wrong tree is a green run that means nothing.
+
+`compare:templates`, `gaps:templates` and `check:templates` default to
+`edison_output_comparison/templates`, which is where that tree now lives.
+
 ### "Nothing checked them" said the one thing that was not true
 
 The heading over layer 2's coverage gap read:

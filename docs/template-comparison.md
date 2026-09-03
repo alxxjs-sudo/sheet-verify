@@ -11,7 +11,7 @@ it shows up in a report comparison, because a template is not a report.
 ## Running it
 
 ```bash
-npm run compare:templates              # verify ./comparison/templates
+npm run compare:templates              # verify ./edison_output_comparison/templates
 npm run compare:templates -- <folder>  # verify somewhere else
 npm run bless:templates                # take the current downloads as the contract
 npm run gaps:templates                 # what the cases have never exercised
@@ -44,7 +44,7 @@ comparison, and it uses none of that machinery.
 One folder per template kind, one folder per case:
 
 ```
-comparison/templates/
+edison_output_comparison/templates/
   program_selection_template/
     <case name>/
       current/template.xlsx       what the app produced
