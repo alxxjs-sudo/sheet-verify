@@ -142,6 +142,11 @@ report type. This is the only configuration most trees ever need:
 { "sheets": { "Geography": { "tables": { "Table 2": { "keyColumns": ["Portfolio", "Geography Level"] } } } } }
 ```
 
+A run names the type folders that have no `meta.json` yet, and prints the
+command that writes a starting one from the pairs themselves. If you use Claude
+Code, the `meta-config` agent will do this step and check its own work — see
+[Having an agent do it](docs/detection-tuning.md#having-an-agent-do-it).
+
 **4. Name the cells that identify the run**, so they stop failing every run. A
 report id and a creation timestamp differ by construction; a creator name does
 not, if the same account generates every report. See [Report
@@ -244,7 +249,7 @@ question:
 | --- | --- |
 | run it, name a pair, choose which cases run, generate a config | **[docs/cli.md](docs/cli.md)** |
 | set keys, tables, tolerance, metadata — every option and where it goes | **[docs/configuration.md](docs/configuration.md)** |
-| work out *which* correction a report needs, and fix a mis-detected table | **[docs/detection-tuning.md](docs/detection-tuning.md)** |
+| work out *which* correction a report needs, fix a mis-detected table, or hand the job to an agent | **[docs/detection-tuning.md](docs/detection-tuning.md)** |
 | read `report.md`, the ledgers, and the verdict | **[docs/reading-a-report.md](docs/reading-a-report.md)** |
 | call it from a test suite or from code | **[docs/api.md](docs/api.md)** |
 | verify a template the app hands out to be edited and uploaded back | **[docs/template-comparison.md](docs/template-comparison.md)** |

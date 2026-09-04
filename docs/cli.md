@@ -213,6 +213,24 @@ only where a run says detection got it wrong.
 
 It refuses to touch a `meta.json` that already has settings in it.
 
+**A run tells you where this is worth doing.** Any report type folder holding
+cases with no `meta.json` of its own is named at the end of the run, with the
+command:
+
+```
+1 report type folder(s) have no meta.json:
+  output_comparison/marginal_analysis
+  ...
+  npm run write:meta -- output_comparison/marginal_analysis
+```
+
+Not a failure, and it does not change the exit code — a tree can be green and
+unconfigured at once. The note stops the moment the file exists.
+
+For the header rows and keys `--write-meta` will not guess, there is a Claude
+Code agent that does the whole job and checks its own work: see
+[Having an agent do it](detection-tuning.md#having-an-agent-do-it).
+
 ## Guarding what gets verified
 
 Detection is remade on every run, so a table can stop being compared and the

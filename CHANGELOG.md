@@ -6,6 +6,47 @@ shapes. Detection changes ship as minors, each saying what to recheck.
 
 ## 1.13.0 — 2026-09-03
 
+### A run says which report types nobody has configured
+
+`--write-meta` writes the `meta.json` a report type would otherwise be typed out
+by hand, and it existed for months while being mentioned in exactly one place:
+`--help`. Trees went unconfigured because nobody knew the command was there.
+
+Every run now ends by naming the type folders holding cases with no `meta.json`
+of their own, and printing the command:
+
+    2 report type folder(s) have no meta.json:
+      output_comparison/marginal_analysis
+      output_comparison/policy_ranking
+      ...
+      npm run write:meta -- output_comparison/marginal_analysis
+
+It is a sibling of the existing "held no cases" note: a gap a green run would
+otherwise hide. Not a failure, no effect on the exit code, and silent the moment
+the file exists -- because a tree can be green and unconfigured at the same time,
+and passing is not evidence that the configuration is right.
+
+### An agent for the part that needs judgement
+
+`propose.ts` has always said what it will not do:
+
+> The one thing deliberately left out is per-sheet configuration -- header rows,
+> end rows, keys. Those are what a report type genuinely needs a human for.
+
+That gap has a cost, and one tree measured it: fifteen cases failing because no
+one had named `Return Period` as a key, and four more because a header row held
+the run date and so a column was literally named `2026-09-02`.
+
+`.claude/agents/meta-config.md` is a Claude Code subagent for exactly that
+layer. It runs `--write-meta` for the evidence, reads the worklist `report.md`
+already prints, decides the keys and header rows, writes its reasoning into the
+`//` comments, then re-runs the folder and reports before and after.
+
+It inherits one rule verbatim. Keys are safe to get wrong -- a key column that
+does not exist fails loudly. `metadata` is not, because it makes the tool go
+quiet, so nothing the figures depend on goes in it and every entry is justified
+with both observed values.
+
 ### A formula difference that printed the same string twice
 
 Four cases failed on this row, and it says nothing:

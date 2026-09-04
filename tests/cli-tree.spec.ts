@@ -984,3 +984,44 @@ test.describe('choosing a root with no folder given', () => {
     expect(out).toContain('output_comparison/case_001/golden.xlsx');
   });
 });
+
+/**
+ * Naming the report types nobody has configured.
+ *
+ * Detection compares an unconfigured tree perfectly well, and that is the
+ * point of it. But it is a guess about a shape, and what it cannot guess --
+ * what identifies a row, which cells carry the run rather than the report,
+ * whether formulas arrive with results -- is exactly what turns up later as a
+ * failing case that is not a defect. `--write-meta` writes those from the
+ * pairs themselves, and until now said so only in `--help`.
+ */
+test.describe('pointing at --write-meta', () => {
+  test('a report type folder with no meta.json is named, with the command', async () => {
+    await buildTree();
+    // The fixture configures global_standard_cat and leaves srq bare.
+    const { out } = cli(ROOT);
+
+    expect(out).toContain('report type folder(s) have no meta.json');
+    expect(out).toContain('npm run write:meta --');
+
+    // Paths are printed with forward slashes whatever the platform, as every
+    // other path in the log is. The block names the bare type and not the
+    // configured one -- which appears elsewhere in the log, so the assertion
+    // has to be made against the block rather than the whole output.
+    const block = out.slice(out.indexOf('have no meta.json'));
+    expect(block).toContain('reports/srq');
+    expect(block).not.toContain('reports/global_standard_cat');
+  });
+
+  test('it goes quiet once the file exists, and does not fail the run', async () => {
+    await buildTree();
+    await writeJson(join(ROOT, 'reports', 'srq', 'meta.json'), { reportType: 'SRQ' });
+
+    const { out, code } = cli(ROOT);
+
+    expect(out).not.toContain('have no meta.json');
+    // The note never decided the outcome either way. This tree still fails on
+    // the drift case_002 insists on, exactly as it did before the note existed.
+    expect(code).toBe(1);
+  });
+});

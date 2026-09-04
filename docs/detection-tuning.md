@@ -55,6 +55,28 @@ inserted above a block, an extra column, a table that split differently. Those
 are properties of two spreadsheets, not of the report type, and writing them at
 the type level breaks every other case.
 
+## The run tells you when this document applies
+
+A report type folder with no `meta.json` of its own is named at the end of every
+run, with the command that writes one:
+
+```
+2 report type folder(s) have no meta.json:
+  output_comparison/marginal_analysis
+  output_comparison/policy_ranking
+
+Detection is comparing them on its own, which works. What it cannot
+guess is what identifies a row, which cells carry the run rather than
+the report, and whether formulas arrive with results. Write the file
+from the pairs themselves, then read it:
+  npm run write:meta -- output_comparison/marginal_analysis
+```
+
+It is not a failure and it does not change the exit code. A tree can be green
+and unconfigured at the same time — passing is not evidence that the
+configuration is right, only that nothing has moved yet. The note goes quiet the
+moment the file exists.
+
 ## The workflow
 
 **1. Run it, and read three sections of `report.md`.**
@@ -85,6 +107,42 @@ names, header rows and keys are all visible there before you change anything.
 ```
 npm run compare -- output_comparison/<type>/case_001
 ```
+
+## Having an agent do it
+
+The workflow above is mechanical in its evidence and judgemental in its
+decisions, which is an awkward split to do by hand across forty cases. There is
+a Claude Code subagent for it, defined in
+[`.claude/agents/meta-config.md`](../.claude/agents/meta-config.md):
+
+```
+Use the meta-config agent on output_comparison/marginal_analysis
+```
+
+It does exactly the workflow above: runs `--write-meta` for the evidence, reads
+the three `report.md` sections for the worklist, decides the keys and header
+rows, writes the file with its reasoning in the `//` comments, and then re-runs
+the folder and reports the before and after. It works from the reports rather
+than from the spreadsheets, because the reports already carry the worklist in a
+compact form.
+
+**What it decides, and the asymmetry that matters.** Keys and header rows are
+safe to get wrong: a key column that does not exist produces a loud
+`Comparison integrity` error and nothing is silently passed. `metadata` is not
+safe to get wrong, because it makes the tool go *quiet* — a wrong entry there is
+a case that passes when it should not.
+
+So the agent inherits the rule from `src/propose.ts` verbatim: nothing the
+figures depend on — view of risk, currency, model version, a data-as-of date
+somebody can set — and every entry justified with both observed values. Where it
+is unsure it leaves the cell in the verdict and says so, because a case failing
+on an unclassified cell is a question someone can answer, and a case passing
+because the wrong cell was silenced is a question nobody will ask.
+
+**Review what it writes.** That is what the `//` comments are for, and it is
+why the file is committed rather than generated on each run. The agent is a
+faster way to produce a configuration somebody still reads — not a way to stop
+reading it.
 
 ## Recipes
 

@@ -999,6 +999,29 @@ class TypeFolders {
     }
     return out;
   }
+
+  /**
+   * Folders holding cases that have no `meta.json` of their own.
+   *
+   * Detection compares such a tree perfectly well, which is the point of it --
+   * but it is a guess about a *shape*, and the things it cannot guess are the
+   * ones a report type most needs written down: which column identifies a row,
+   * which cells carry the run's identity rather than its content, whether the
+   * generator writes cached formula results. Every one of those shows up as a
+   * failing case that is not a defect.
+   *
+   * So the run names the folders and the command that writes the file. Not a
+   * failure, and not advice about a run that went wrong: a tree can be
+   * perfectly green and still be one `--write-meta` away from staying green
+   * for the right reasons.
+   */
+  async unconfigured(): Promise<string[]> {
+    const out = new Set<string>();
+    for (const dirs of this.seen.values()) {
+      for (const dir of dirs) if (!(await exists(join(dir, 'meta.json')))) out.add(dir);
+    }
+    return [...out].sort();
+  }
 }
 
 /**
@@ -1628,6 +1651,23 @@ ${DISPLAY(relative(process.cwd(), written.markdown))} — and the .xlsx beside i
     console.log(
       `\n${idle.length} report type folder(s) held no cases:\n  ` +
       idle.map((d) => DISPLAY(relative(root, d))).join('\n  '),
+    );
+  }
+
+  // Sibling of the note above: that one names a folder with no cases, this one
+  // names cases with no configuration. Both are gaps a green run would
+  // otherwise hide, and neither is a failure.
+  const unconfigured = await typeFolders.unconfigured();
+  if (unconfigured.length) {
+    const one = unconfigured[0]!;
+    console.log(
+      `\n${unconfigured.length} report type folder(s) have no meta.json:\n  `
+      + unconfigured.map((d) => DISPLAY(relative(process.cwd(), d))).join('\n  ')
+      + '\n\nDetection is comparing them on its own, which works. What it cannot'
+      + '\nguess is what identifies a row, which cells carry the run rather than'
+      + '\nthe report, and whether formulas arrive with results. Write the file'
+      + '\nfrom the pairs themselves, then read it:'
+      + `\n  npm run write:meta -- ${DISPLAY(relative(process.cwd(), one))}`,
     );
   }
 
