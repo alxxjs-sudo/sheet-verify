@@ -740,6 +740,29 @@ export function formatMarkdownReport(
     }
   }
 
+  // A table can change without any of it being a defect: rows arrive or go, a
+  // column moves, and every value the two files share still agrees. The
+  // verdict says exactly that -- "Something changed — review below" -- and
+  // until now there was nothing below to review, because the section above is
+  // filtered to tables that failed.
+  //
+  // Found on a report that gained five return periods. It opened by inviting a
+  // review, listed the recalculating cells and the coverage gaps, and never
+  // once named the five rows. They existed only in `diff.json`.
+  const reviewed = compared.filter((s) => s.diff!.ok && s.diff!.reviewOnly);
+  if (reviewed.length) {
+    out.push('', `## Changed, and not a defect (${reviewed.length})`, '');
+    out.push('Rows or columns arrived, went or moved, and every value the two files');
+    out.push('share agrees. Review it and re-bless the golden if it was meant — the');
+    out.push('figures did not disagree, so the run does not call it a defect.');
+    for (const s of reviewed) {
+      out.push('', `### ${cell(s.label)}`);
+      const where = coverage(s);
+      if (where) out.push('', where);
+      out.push(...findings(s, sep, limit));
+    }
+  }
+
   if (swept && swept.totalAffected > 0) {
     out.push('', `## Will recalculate differently (${swept.totalAffected})`, '');
     out.push('These hold formulas whose text has not changed, so nothing above reports');

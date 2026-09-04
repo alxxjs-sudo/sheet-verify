@@ -6,6 +6,26 @@ shapes. Detection changes ship as minors, each saying what to recheck.
 
 ## 1.13.0 — 2026-09-03
 
+### "Review below" now has something below it
+
+A case that gained rows opened with:
+
+    **No defects.** Something changed — review below.
+
+...and then never said what. It listed the cells that will recalculate and the
+cells outside the keyed comparison, and nowhere named the five rows that had
+arrived. They were in `diff.json` under `rows.added` and nowhere else.
+
+The section that lists changed tables is filtered to the ones that *failed*, so
+a table that changed without failing -- rows in or out, a column moved, every
+shared value still agreeing -- fell through it. The verdict invited a review
+that the report did not contain.
+
+There is now a `## Changed, and not a defect (n)` section, with the same row and
+column population blocks a failing table gets. The report that prompted this
+reads `5 added: 5, 20, 25, 200, 500` -- the return periods the new run emits and
+its golden does not.
+
 ### A run says which report types nobody has configured
 
 `--write-meta` writes the `meta.json` a report type would otherwise be typed out

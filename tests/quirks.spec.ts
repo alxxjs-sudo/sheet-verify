@@ -952,3 +952,60 @@ test.describe('a formula difference the A1 text cannot show', () => {
     expect(md).not.toContain('shown as the');
   });
 });
+
+/**
+ * A table that changed without failing.
+ *
+ * Rows arrive or go, a column moves, and every value the two files share still
+ * agrees. The verdict says exactly that -- "Something changed — review below"
+ * -- and the section listing changed tables is filtered to the ones that
+ * failed, so there was nothing below to review.
+ *
+ * Found on a report that gained five return periods: it invited a review,
+ * listed the recalculating cells and the coverage gaps, and never named the
+ * five rows. They were in `diff.json` and nowhere else.
+ */
+test.describe('a change that is not a defect', () => {
+  const SPEC: WorkbookSpec = {
+    defaults: { requireCachedValues: false },
+    sheets: { Data: { keyColumns: ['Region'] } },
+  };
+
+  test('the added rows are named, not just counted in the verdict', async () => {
+    const golden = await sheet('quirk-review-g.xlsx', [
+      ['Region', 'Gross'], ['North', 100], ['South', 200],
+    ]);
+    const actual = await sheet('quirk-review-a.xlsx', [
+      ['Region', 'Gross'], ['North', 100], ['South', 200], ['East', 300],
+    ]);
+
+    const { compared, diff } = await runWorkbook(golden, actual, SPEC);
+    const swept = await sweep(golden, actual, compared);
+    const md = formatMarkdownReport(diff, swept, { name: 'review' });
+
+    // The premise: no defect, but something moved.
+    expect(diff.ok).toBe(true);
+    expect(diff.reviewOnly).toBe(true);
+
+    expect(md).toContain('Something changed — review below');
+    expect(md).toContain('## Changed, and not a defect (1)');
+    // ...and the review has something in it.
+    expect(md).toContain('**Row population**');
+    expect(md).toContain('`East`');
+  });
+
+  test('a clean case gets no such section', async () => {
+    const golden = await sheet('quirk-review-clean-g.xlsx', [
+      ['Region', 'Gross'], ['North', 100],
+    ]);
+    const actual = await sheet('quirk-review-clean-a.xlsx', [
+      ['Region', 'Gross'], ['North', 100],
+    ]);
+
+    const { compared, diff } = await runWorkbook(golden, actual, SPEC);
+    const swept = await sweep(golden, actual, compared);
+    const md = formatMarkdownReport(diff, swept, { name: 'review-clean' });
+
+    expect(md).not.toContain('Changed, and not a defect');
+  });
+});
