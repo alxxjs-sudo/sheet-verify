@@ -78,7 +78,19 @@ const SUMMARY_DIR = '!summary';
  * any one directory -- threading it through every frame would say less.
  */
 let resultDir: string = RESULT_DIR;
-const SPREADSHEET = new Set(['.xlsx', '.xlsm', '.csv', '.tsv', '.txt']);
+/**
+ * Extensions a case can be built from.
+ *
+ * `.zip` is here because an archive is a workbook: its members are its sheets,
+ * and `ZipReader` compares them member by member. Before it was listed, a
+ * `golden/` folder holding `details.zip` reported "holds no .xlsx, .xlsm or
+ * .csv file" -- true of the extension and false of the contents, which were
+ * two CSVs of 8,476 rows each.
+ */
+const SPREADSHEET = new Set(['.xlsx', '.xlsm', '.csv', '.tsv', '.txt', '.zip']);
+
+/** The list as a sentence, so an error names what it would actually accept. */
+const READABLE = [...SPREADSHEET].join(', ');
 
 const GOLDEN = /^(golden|baseline|expected|before)\b/i;
 const ACTUAL = /^(actual|new|current|after|report)\b/i;
@@ -345,16 +357,23 @@ async function roleFolder(
   if (!entries.length) {
     return {
       problem: others.length
-        ? `${found}/ holds no .xlsx, .xlsm or .csv file, only [${others.sort().join(', ')}]`
-        : `${found}/ holds no .xlsx, .xlsm or .csv file`,
+        ? `${found}/ holds no comparable file (${READABLE}), only [${others.sort().join(', ')}]`
+        : `${found}/ holds no comparable file (${READABLE})`,
     };
   }
   // Picking one would be a guess, and the whole point of the folder is that
   // the file names no longer say which is which.
+  //
+  // The way out is a folder per artefact rather than a folder per download:
+  // one case each, one file each side, and every one of them compared. Said
+  // here because the alternative -- comparing one and reporting the others as
+  // uncompared -- is what this used to do, and a case that names two files it
+  // did not open is not much better than one that stays quiet about them.
   if (entries.length > 1) {
     return {
-      problem: `${found}/ holds ${entries.length} spreadsheets [${entries.sort().join(', ')}]`
-        + ' — it must hold exactly one',
+      problem: `${found}/ holds ${entries.length} comparable files [${entries.sort().join(', ')}]`
+        + ' — it must hold exactly one. Give each artefact a case folder of its'
+        + ' own, so all of them are compared rather than one of them chosen',
     };
   }
   return { file: join(found, entries[0]!), others: others.map((f) => join(found, f)) };
@@ -407,7 +426,7 @@ async function readCase(dir: string, root: string): Promise<Case | string> {
     }
     return entries.length
       ? `no golden file. Rename one of [${entries.join(', ')}] to golden${extname(entries[0]!)}`
-      : 'folder holds no .xlsx, .xlsm or .csv files';
+      : `folder holds no comparable file (${READABLE})`;
   }
 
   const rest = entries.filter((f) => f !== golden);

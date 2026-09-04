@@ -103,7 +103,52 @@ fails the run, rather than quietly dropping out of the count:
 5 cases, 5 failing, 1 could not be run
 ```
 
-`.xlsx`, `.xlsm` and `.csv` all work, and both files must be the same kind.
+`.xlsx`, `.xlsm`, `.csv` and `.zip` all work, and both files must be the same
+kind.
+
+### A download that produces several files
+
+A `.zip` is compared as a workbook whose sheets are its members, so
+`details.zip` holding `policy.csv` and `net_of_fac.csv` is a two-sheet
+comparison — keys, tolerances and the sweep all reach inside it, and a member
+the golden had and the report does not is a removed sheet.
+
+What a role folder still cannot hold is **two comparable files**, because
+nothing then says which is the pair:
+
+```
+premium_allocation/pa_upload_pseudopolicy_psold/
+  golden/
+    golden-...-results.csv
+    golden-...-details.zip     ← two artefacts, no way to tell which is which
+```
+
+Give each artefact a case folder of its own. Nested under the download reads
+best, because everything about one download stays together and a `meta.json`
+at that level reaches all of it:
+
+```
+premium_allocation/
+  meta.json                        keys for the members, for every case
+  pa_upload_pseudopolicy_psold/
+    meta.json                      anything true of this download alone
+    allocation/
+      golden/  golden-...-results.csv
+      current/ actual-...-results.csv
+    details/
+      golden/  golden-...-details.zip
+      current/ actual-...-details.zip
+    unused/
+      golden/  golden-...-unused.zip
+      current/ actual-...-unused.zip
+```
+
+Each artefact folder is a case, so each gets its own verdict and its own
+`report.md`, and the run counts them separately.
+
+**Do not name one of them `results`.** A folder by that name is where a case
+writes its own output, and the walker skips it — a case called `results` is
+never found and never compared, silently. `!summary` is reserved the same way.
 
 ## Choosing which cases run
 

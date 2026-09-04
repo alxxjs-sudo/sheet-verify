@@ -6,6 +6,34 @@ shapes. Detection changes ship as minors, each saying what to recheck.
 
 ## 1.13.0 — 2026-09-03
 
+### A zip counts as a file a case can be built from
+
+`ZipReader` could read an archive, and no case ever handed it one: a `golden/`
+folder holding `details.zip` reported "holds no .xlsx, .xlsm or .csv file" --
+true of the extension, false of the contents, which were two CSVs of 8,476 rows
+each.
+
+`.zip` is now one of the extensions a case is built from, so an archive on its
+own is a case and its members are its sheets.
+
+**One behaviour changed with it.** A role folder holding a spreadsheet *and* an
+archive used to compare the spreadsheet and report the archive as a file nobody
+read. Both are comparable now, so that folder holds two artefacts and no way to
+say which is the pair -- it stops, and says what to do:
+
+    current/ holds 2 comparable files [actual-x-details.zip, actual-x-results.csv]
+      — it must hold exactly one. Give each artefact a case folder of its own,
+      so all of them are compared rather than one of them chosen
+
+Which is the point. Comparing one of three files and naming the other two is
+not much better than staying quiet about them; a folder each means all three
+are compared, each with its own verdict.
+
+The layout that works, and the trap in it, are in
+[docs/cli.md](docs/cli.md#a-download-that-produces-several-files). The trap:
+do not name an artefact folder `results`. That is where a case writes its own
+output, the walker skips it, and a case called `results` is never found.
+
 ### A zip is a workbook whose sheets are its members
 
 `details.zip` holds `policy.csv` and `net_of_fac.csv`, 8,476 rows each, and

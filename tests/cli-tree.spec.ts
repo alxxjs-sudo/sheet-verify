@@ -408,8 +408,10 @@ test.describe('a tree of report types', () => {
     await writeFile(join(dir, 'rep_1786999999999.csv'), 'Region,Premium\nEast,102\n', 'utf8');
 
     const { out, code } = cli(root);
-    expect(out).toContain('current/ holds 2 spreadsheets');
+    expect(out).toContain('current/ holds 2 comparable files');
     expect(out).toContain('it must hold exactly one');
+    // And the way out, which is a case folder each rather than a choice.
+    expect(out).toContain('case folder of its own');
     expect(code).toBe(1);
   });
 
@@ -871,9 +873,10 @@ test.describe('a tree of report types', () => {
 
   test('a file in golden/ or current/ that nothing compared fails the case and is named', async () => {
     await buildTree();
-    // A case whose two sides each hold the spreadsheet AND an archive beside
-    // it. Found in a real tree: results.csv plus details.zip and unused.zip,
-    // reported "Identical" having opened one of the three.
+    // A case whose two sides each hold the spreadsheet AND something beside it
+    // that no reader handles. Found in a real tree, where it was an archive --
+    // archives are read now, so the guard is shown here with a PDF, which is
+    // the shape that still cannot be compared and still must not pass quietly.
     const dir = join(ROOT, 'reports', 'srq', 'case_folders');
     await mkdir(join(dir, 'golden'), { recursive: true });
     await mkdir(join(dir, 'current'), { recursive: true });
@@ -881,20 +884,74 @@ test.describe('a tree of report types', () => {
     const a = await buildMultiSheet('uncmp-a.xlsx');
     await cp(g, join(dir, 'golden', 'golden-x.xlsx'));
     await cp(a, join(dir, 'current', 'actual-x.xlsx'));
-    await writeFile(join(dir, 'golden', 'golden-x-details.zip'), 'not really a zip', 'utf8');
-    await writeFile(join(dir, 'current', 'actual-x-details.zip'), 'not really a zip', 'utf8');
+    await writeFile(join(dir, 'golden', 'golden-x-notes.pdf'), 'not a table', 'utf8');
+    await writeFile(join(dir, 'current', 'actual-x-notes.pdf'), 'not a table', 'utf8');
 
     const { out, code } = cli(dir);
     expect(code).toBe(1);
     expect(out).toContain('that nothing compared');
-    expect(out).toContain('golden-x-details.zip');
-    expect(out).toContain('actual-x-details.zip');
+    expect(out).toContain('golden-x-notes.pdf');
+    expect(out).toContain('actual-x-notes.pdf');
 
     const md = await readFile(join(dir, 'results', 'report.md'), 'utf8');
     expect(md).toContain('## Files nothing compared (2)');
     // Said plainly, because a pass that skipped a file is the failure this
     // whole tool exists to prevent.
     expect(md).toContain('it says nothing about these');
+  });
+
+  test('two comparable files on one side stop the case and say what to do', async () => {
+    await buildTree();
+    // The premium allocation shape: results.csv and details.zip on each side.
+    // An archive is comparable now, so this is no longer "one file plus one
+    // nobody read" -- it is two artefacts and no way to tell which is the
+    // pair. Choosing would compare one and quietly drop the other.
+    const dir = join(ROOT, 'reports', 'srq', 'two_artefacts');
+    await mkdir(join(dir, 'golden'), { recursive: true });
+    await mkdir(join(dir, 'current'), { recursive: true });
+    for (const [side, role] of [['golden', 'golden'], ['current', 'actual']] as const) {
+      await writeFile(join(dir, side, `${role}-x-results.csv`), 'Ref,Amount\nR-1,10\n', 'utf8');
+      const { default: JSZip } = await import('jszip');
+      const zip = new JSZip();
+      zip.file('policy.csv', 'Ref,Amount\nR-1,10\n');
+      await writeFile(join(dir, side, `${role}-x-details.zip`),
+        await zip.generateAsync({ type: 'nodebuffer' }));
+    }
+
+    const { out, code } = cli(dir);
+    expect(code).toBe(1);
+    expect(out).toContain('2 comparable files');
+    expect(out).toContain('details.zip');
+    // Not just "no", but the way out.
+    expect(out).toContain('case folder of its own');
+  });
+
+  test('an archive on its own is a case, and its members are the sheets', async () => {
+    await buildTree();
+    const dir = join(ROOT, 'reports', 'srq', 'archive_case');
+    await mkdir(join(dir, 'golden'), { recursive: true });
+    await mkdir(join(dir, 'current'), { recursive: true });
+    const { default: JSZip } = await import('jszip');
+    for (const [side, role, amount] of [
+      ['golden', 'golden', '10'], ['current', 'actual', '10'],
+    ] as const) {
+      const zip = new JSZip();
+      zip.file('policy.csv', `Ref,Amount\nR-1,${amount}\nR-2,20\n`);
+      zip.file('net_of_fac.csv', 'Ref,Limit\nR-1,100\n');
+      await writeFile(join(dir, side, `${role}-x-details.zip`),
+        await zip.generateAsync({ type: 'nodebuffer' }));
+    }
+    await writeJson(join(dir, 'case.json'), {
+      sheets: { 'policy.csv': { keyColumns: ['Ref'] }, 'net_of_fac.csv': { keyColumns: ['Ref'] } },
+    });
+
+    const { out, code } = cli(dir);
+    expect(code).toBe(0);
+    expect(out).toContain('identical');
+    // Both members were compared, not just the first.
+    const md = await readFile(join(dir, 'results', 'report.md'), 'utf8');
+    expect(md).toContain('policy.csv');
+    expect(md).toContain('net_of_fac.csv');
   });
 
   test('a type folder naming itself analysisType is not filed as unspecified', async () => {
