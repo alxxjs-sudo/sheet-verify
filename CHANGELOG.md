@@ -20,10 +20,19 @@ now:
 - a type summary → each case's `report.md`
 - a case report → the two files it compared
 
-Relative, so the tree can move or be sent to somebody, and wrapped in angle
-brackets because these names are not tidy: `Comparison Report.md` holds a space
-and a type nobody named becomes `Unspecified report type (reports-srq).md`.
-Both break a bare markdown destination.
+The two markdown-to-markdown links are relative and wrapped in angle brackets,
+because these names are not tidy: `Comparison Report.md` holds a space and a
+type nobody named becomes `Unspecified report type (reports-srq).md`. Both
+break a bare destination, and a relative path survives the tree being moved or
+sent on -- which those two files are, routinely.
+
+The links to the spreadsheets are absolute `file://` URLs instead, which is the
+one place here that is right. Following those means *opening Excel*: a relative
+path to a .xlsx is handed back to whatever is rendering the page, which has
+nothing useful to do with it, while a file:// URL goes to the operating system.
+Built with `pathToFileURL`, so the drive letter, the separators and the spaces
+these downloads carry -- `golden-basic_comparison_report 1788109420124.xlsx` --
+are all encoded rather than left to break the link.
 
 `summaryMarkdown` and `typeSummaryMarkdown` take the paths as optional
 arguments and render exactly as before without them.

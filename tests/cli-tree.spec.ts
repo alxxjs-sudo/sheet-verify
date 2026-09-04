@@ -1066,16 +1066,44 @@ test.describe('links between the summaries and the reports', () => {
     await expect(access(join(dir, match![1]!))).resolves.toBeUndefined();
   });
 
-  test('a case report links to the two files it compared', async () => {
+  test('a case report links to the two files it compared, as file:// URLs', async () => {
     await buildTree();
     const dir = join(ROOT, 'reports', 'global_standard_cat', 'case_001');
     cli(dir);
 
     const md = await readFile(join(dir, 'results', 'report.md'), 'utf8');
-    expect(md).toContain('](<../golden.xlsx>)');
-    expect(md).toContain('](<../actual.xlsx>)');
-    // Forward slashes whatever the platform: `sep` in that scope is the key
-    // separator, not the path one, and shadowing it once produced `..\golden`.
-    expect(md).not.toMatch(/\]\(<[^>]*\[^>]*>\)/);
+    // Absolute file:// here and nowhere else in these artefacts: following one
+    // of these means opening Excel, which is the operating system's job. A
+    // relative path to a .xlsx goes back to whatever is rendering the page.
+    for (const side of ['golden.xlsx', 'actual.xlsx']) {
+      expect(md).toContain(`/${side})`);
+      expect(md).toContain('](file:///');
+    }
+    // No separators left as they came off Windows, and no raw spaces.
+    const hrefs = [...md.matchAll(/\]\((file:\/\/\/[^)]*)\)/g)].map((m) => m[1]!);
+    expect(hrefs.length).toBeGreaterThanOrEqual(2);
+    for (const h of hrefs) {
+      expect(h).not.toContain('\\');
+      expect(h).not.toContain(' ');
+    }
+  });
+
+  test('a name with spaces is percent-encoded rather than left to break', async () => {
+    // These downloads keep the name the source system gave them, and it
+    // carries the download's timestamp: "golden-report 1788109420124.xlsx".
+    const dir = join(DIR, 'tree-spaces', 'case_001');
+    await rm(join(DIR, 'tree-spaces'), { recursive: true, force: true });
+    await mkdir(dir, { recursive: true });
+    const built = await buildMultiSheet('tree-spaces-src.xlsx');
+    await mkdir(join(dir, 'golden'), { recursive: true });
+    await mkdir(join(dir, 'current'), { recursive: true });
+    await cp(built, join(dir, 'golden', 'golden-report 1788109420124.xlsx'));
+    await cp(built, join(dir, 'current', 'actual-report 1788403926993.xlsx'));
+
+    cli(join(DIR, 'tree-spaces'));
+    const md = await readFile(join(dir, 'results', 'report.md'), 'utf8');
+
+    expect(md).toContain('golden-report%201788109420124.xlsx');
+    expect(md).toContain('actual-report%201788403926993.xlsx');
   });
 });

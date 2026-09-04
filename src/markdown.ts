@@ -1,4 +1,4 @@
-import { dirname, relative, sep as pathSep } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { SheetOutcome, WorkbookDiffResult, CellValue, ValueDiff } from './types.js';
 import type { SweepResult } from './sweep.js';
 
@@ -55,9 +55,9 @@ export interface MarkdownOptions {
   /**
    * Where this report is being written.
    *
-   * Given, the two file paths in the header become links to the files
-   * themselves, relative to this one -- so the pair a verdict is about is one
-   * click away rather than a path to copy. Absent, they render as before.
+   * Given, the two file paths in the header become `file://` links, so the
+   * pair a verdict is about opens in Excel rather than being a path to copy.
+   * Absent, they render as plain paths, exactly as before.
    */
   reportPath?: string;
   /** Separator used in composite keys, replaced with " / " for display. */
@@ -672,12 +672,22 @@ export function formatMarkdownReport(
   // The path is kept as the link text rather than replaced by a name: it says
   // which of several similarly-named downloads was read, and that is the
   // question the header exists to answer. The link just saves copying it.
+  //
+  // A `file://` URL, and absolute, which is the one place in these artefacts
+  // where that is right. The other links here are markdown pointing at
+  // markdown -- a reader follows those inside whatever is rendering the page,
+  // and a relative path survives the tree being moved or sent on. These two
+  // point at spreadsheets, and following them means *opening Excel*. A
+  // relative path to a .xlsx is handed back to the renderer, which has nothing
+  // useful to do with it; a file:// URL goes to the operating system.
+  //
+  // Built with pathToFileURL rather than by hand: it fixes the drive letter,
+  // turns the separators round and percent-encodes the spaces these downloads
+  // carry in their names -- "golden-basic_comparison_report 1788109420124.xlsx".
   const fileLink = (target: string): string => {
     const shown = code(target);
     if (!options.reportPath) return shown;
-    const rel = relative(dirname(options.reportPath), target).split(pathSep).join('/');
-    const href = rel.startsWith('.') ? rel : `./${rel}`;
-    return `[${shown}](<${href}>)`;
+    return `[${shown}](${pathToFileURL(target).href})`;
   };
 
   out.push(...table(['', ''], [
