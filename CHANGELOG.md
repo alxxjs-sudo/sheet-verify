@@ -6,6 +6,37 @@ shapes. Detection changes ship as minors, each saying what to recheck.
 
 ## 1.13.0 — 2026-09-03
 
+### A zip is a workbook whose sheets are its members
+
+`details.zip` holds `policy.csv` and `net_of_fac.csv`, 8,476 rows each, and
+nothing read it. The run compared the `results.csv` beside it, said
+**Identical**, and named the archive as a file nobody checked -- which failed
+the case, correctly, and told you nothing about what was in it.
+
+A workbook in this codebase is a list of named tables and nothing more, which
+is the same observation the CSV reader already makes -- "a CSV is one table, so
+it presents itself as a one-sheet workbook". An archive of CSVs is exactly
+that, so `ZipReader` presents it as one.
+
+Everything above gets the archive for free. Members pair by name; keys,
+tolerances and the layer 2 sweep address a member the way they address any
+sheet; and the added/removed-sheet rules already in place answer the question
+this raised -- a member the golden had and the report does not is a **removed
+sheet**, so a defect, and a new one is review. `unused.zip` being in one case
+and not another stopped needing a policy of its own.
+
+Nothing about the archive itself is compared, deliberately: every zip in one
+real tree differed byte-for-byte from its golden while every member inside was
+identical, because an archive carries the moment it was written.
+
+On the case that prompted it -- whose members really are reordered between runs
+-- a keyed comparison now reads 8,476 rows compared in each member and no
+differences at all.
+
+Members are still only reached when a case points at the archive. A case whose
+`golden/` folder holds several artefacts compares one of them; that is the
+next piece.
+
 ### The summaries link to what they summarise
 
 Three files are written for reading, and each named its next step in prose and

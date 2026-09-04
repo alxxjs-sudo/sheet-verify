@@ -4,8 +4,17 @@ import { resolveSpec } from './model.js';
 import { compare } from './compare.js';
 import { ExcelReader } from './reader-excel.js';
 import { CsvReader } from './reader-csv.js';
+import { ZipReader } from './reader-zip.js';
 
-const READERS: SheetReader[] = [new ExcelReader(), new CsvReader()];
+// The zip reader is handed `readerFor` rather than importing it, so a member
+// of an archive finds its reader through the same registry as any other file
+// -- including one registered later by a caller -- and neither module has to
+// import the other.
+const READERS: SheetReader[] = [
+  new ExcelReader(),
+  new CsvReader(),
+  new ZipReader((path) => readerFor(path)),
+];
 
 /**
  * Registers an additional reader, or overrides a built-in for an extension.
