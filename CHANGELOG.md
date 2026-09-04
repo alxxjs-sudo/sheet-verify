@@ -6,6 +6,28 @@ shapes. Detection changes ship as minors, each saying what to recheck.
 
 ## 1.13.0 — 2026-09-03
 
+### The summaries link to what they summarise
+
+Three files are written for reading, and each named its next step in prose and
+left you to find it: the run summary said "each report type also has a summary
+of its own", a type summary said "per-case detail is in each case's
+`results/report.md`", and a case report printed two absolute paths to copy.
+
+Every one of those paths is known at the moment of writing, so they are links
+now:
+
+- run summary → each report type's own summary
+- a type summary → each case's `report.md`
+- a case report → the two files it compared
+
+Relative, so the tree can move or be sent to somebody, and wrapped in angle
+brackets because these names are not tidy: `Comparison Report.md` holds a space
+and a type nobody named becomes `Unspecified report type (reports-srq).md`.
+Both break a bare markdown destination.
+
+`summaryMarkdown` and `typeSummaryMarkdown` take the paths as optional
+arguments and render exactly as before without them.
+
 ### "Review below" now has something below it
 
 A case that gained rows opened with:

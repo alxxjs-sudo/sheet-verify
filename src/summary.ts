@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 
 /**
  * A run-level view: which cases passed, which failed, grouped by report type.
@@ -97,13 +97,42 @@ const stamp = (when: Date): string => when.toISOString().slice(0, 16).replace('T
 const sum = (list: CaseRecord[], pick: (c: CaseRecord) => number | undefined): number =>
   list.reduce((total, c) => total + (pick(c) ?? 0), 0);
 
-/** The rows both the run summary and a single type's summary are built from. */
-function caseTable(list: CaseRecord[]): string[] {
+/**
+ * A markdown link from one written file to another, as a relative path.
+ *
+ * Relative and not absolute: these files are read where they sit, get copied
+ * between machines, and are opened as often in an editor as on a web view. An
+ * absolute path is right on exactly one machine.
+ *
+ * The destination is wrapped in angle brackets because these names are not
+ * tidy -- "Comparison Report.md" holds a space, and a type nobody named
+ * becomes "Unspecified report type (reports-srq).md", parentheses and all.
+ * Both break a bare link destination and neither breaks a bracketed one.
+ */
+function linkTo(from: string, target: string | undefined, text: string): string {
+  if (!target) return text;
+  const rel = relative(dirname(from), target).split(sep).join('/');
+  // A sibling reads better with the explicit "./", and some renderers need it
+  // before a name that could be mistaken for a scheme.
+  const href = rel.startsWith('.') ? rel : `./${rel}`;
+  return `[${text}](<${href}>)`;
+}
+
+/**
+ * The rows both the run summary and a single type's summary are built from.
+ *
+ * `from` is the file being written, when there is one: the case folder then
+ * links to that case's own `report.md`, which is where every reader of this
+ * table is trying to get to. Without it the table renders exactly as before,
+ * which is what the direct callers in the tests want.
+ */
+function caseTable(list: CaseRecord[], from?: string): string[] {
   const out = ['| | case folder | what it is | result |', '| --- | --- | --- | --- |'];
   for (const c of list) {
     // The label says what the case is for, and is the difference between a
     // reader recognising the failure and looking up what case_002 was.
-    out.push(`| ${MARK[c.verdict]} | \`${c.name}\` | ${c.label ?? '—'} | ${c.summary} |`);
+    const folder = from ? linkTo(from, c.report, `\`${c.name}\``) : `\`${c.name}\``;
+    out.push(`| ${MARK[c.verdict]} | ${folder} | ${c.label ?? '—'} | ${c.summary} |`);
   }
   return out;
 }
@@ -132,10 +161,25 @@ export interface SummaryScope {
   rebuilt?: boolean;
 }
 
+/**
+ * Where this file is being written, and where each type's own summary went.
+ *
+ * Given, the run summary links its report-type rows to those files and its
+ * case rows to each case's report. Absent, it renders exactly as it did
+ * before -- which is what a caller holding only records can still do.
+ */
+export interface SummaryLinks {
+  /** The file being written. Links are relative to its folder. */
+  from: string;
+  /** Report type -> the markdown summary written for it. */
+  types?: Map<string, string>;
+}
+
 export function summaryMarkdown(
   cases: CaseRecord[],
   when = new Date(),
   scope: SummaryScope = {},
+  links?: SummaryLinks,
 ): string {
   const groups = grouped(cases);
   const failed = tally(cases, 'failed') + tally(cases, 'could not run');
@@ -170,15 +214,18 @@ export function summaryMarkdown(
 
   for (const [type, list] of groups) {
     const bad = tally(list, 'failed');
+    // The type name is the way down into that type's own page, which is the
+    // file people send on and the one this table exists to point at.
+    const named = links ? linkTo(links.from, links.types?.get(type), type) : type;
     out.push(
-      `| ${type} | ${list.length} | ${tally(list, 'passed')} | ` +
+      `| ${named} | ${list.length} | ${tally(list, 'passed')} | ` +
         `${bad ? `**${bad}**` : '0'} | ${tally(list, 'could not run')} |`,
     );
   }
 
   for (const [type, list] of groups) {
     out.push('', `## ${type}`, '');
-    out.push(...caseTable(list));
+    out.push(...caseTable(list, links?.from));
     const watch = watchNote(list);
     if (watch) out.push('', watch);
   }
@@ -204,6 +251,7 @@ export function typeSummaryMarkdown(
   list: CaseRecord[],
   when = new Date(),
   scope: SummaryScope = {},
+  from?: string,
 ): string {
   const sorted = [...list].sort(
     (a, b) => ORDER[a.verdict] - ORDER[b.verdict] || a.name.localeCompare(b.name),
@@ -236,7 +284,7 @@ export function typeSummaryMarkdown(
       : '';
   if (note) out.push(note, '');
 
-  out.push(...caseTable(sorted));
+  out.push(...caseTable(sorted, from));
 
   const compared = sum(sorted, (c) => c.tablesCompared);
   const unchecked = sum(sorted, (c) => c.uncheckedDiffering);
@@ -516,11 +564,18 @@ export async function writeSummary(
     await clearStale(into, files, scope);
   }
 
-  await writeFile(markdown, summaryMarkdown(cases, when, scope), 'utf8');
+  // Written after the type files are named, so the run summary can point at
+  // them. Both directions are relative to the file doing the pointing.
+  const typeLinks = new Map(types.map((t) => [t.type, t.markdown]));
+  await writeFile(
+    markdown,
+    summaryMarkdown(cases, when, scope, { from: markdown, types: typeLinks }),
+    'utf8',
+  );
   await writeSummaryWorkbook(workbook, cases, when);
   for (const t of types) {
     const list = cases.filter((c) => c.reportType === t.type);
-    await writeFile(t.markdown, typeSummaryMarkdown(t.type, list, when, scope), 'utf8');
+    await writeFile(t.markdown, typeSummaryMarkdown(t.type, list, when, scope, t.markdown), 'utf8');
     await writeTypeSummaryWorkbook(t.workbook, t.type, list, when, scope);
   }
 

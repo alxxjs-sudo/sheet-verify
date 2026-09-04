@@ -1,3 +1,4 @@
+import { dirname, relative, sep as pathSep } from 'node:path';
 import type { SheetOutcome, WorkbookDiffResult, CellValue, ValueDiff } from './types.js';
 import type { SweepResult } from './sweep.js';
 
@@ -51,6 +52,14 @@ export interface MarkdownOptions {
   detailRows?: number;
   /** Files beside the pair that nothing compared. See `CaseOptions.uncompared`. */
   uncompared?: string[];
+  /**
+   * Where this report is being written.
+   *
+   * Given, the two file paths in the header become links to the files
+   * themselves, relative to this one -- so the pair a verdict is about is one
+   * click away rather than a path to copy. Absent, they render as before.
+   */
+  reportPath?: string;
   /** Separator used in composite keys, replaced with " / " for display. */
   keySeparator?: string;
   /**
@@ -660,9 +669,20 @@ export function formatMarkdownReport(
   const stamp = (f?: { bytes: number; modified: string }) =>
     f ? ` — ${f.bytes.toLocaleString('en-GB')} bytes, modified ${f.modified}` : '';
 
+  // The path is kept as the link text rather than replaced by a name: it says
+  // which of several similarly-named downloads was read, and that is the
+  // question the header exists to answer. The link just saves copying it.
+  const fileLink = (target: string): string => {
+    const shown = code(target);
+    if (!options.reportPath) return shown;
+    const rel = relative(dirname(options.reportPath), target).split(pathSep).join('/');
+    const href = rel.startsWith('.') ? rel : `./${rel}`;
+    return `[${shown}](<${href}>)`;
+  };
+
   out.push(...table(['', ''], [
-    ['golden', `${code(diff.base.source)} — ${diff.base.sheets.length} sheet(s)${stamp(options.inputs?.golden)}`],
-    ['report', `${code(diff.next.source)} — ${diff.next.sheets.length} sheet(s)${stamp(options.inputs?.actual)}`],
+    ['golden', `${fileLink(diff.base.source)} — ${diff.base.sheets.length} sheet(s)${stamp(options.inputs?.golden)}`],
+    ['report', `${fileLink(diff.next.source)} — ${diff.next.sheets.length} sheet(s)${stamp(options.inputs?.actual)}`],
     ['tables compared', `${compared.length}${positional.length ? `, ${positional.length} by row position` : ''}`],
     ...(skipped.length ? [['tables not compared', String(skipped.length)]] : []),
   ]));

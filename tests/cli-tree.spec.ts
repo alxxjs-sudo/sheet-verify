@@ -1025,3 +1025,57 @@ test.describe('pointing at --write-meta', () => {
     expect(code).toBe(1);
   });
 });
+
+/**
+ * Getting from a summary to the thing it summarises.
+ *
+ * These three files are written for reading, and until now every one of them
+ * named its next step in prose -- "per-case detail is in each case's
+ * results/report.md" -- and left the reader to find it. The paths are all
+ * known at the moment of writing, so they are links.
+ *
+ * Relative, and wrapped in angle brackets: a type nobody named becomes
+ * "Unspecified report type (reports-srq).md", and both the space and the
+ * parentheses break a bare markdown destination.
+ */
+test.describe('links between the summaries and the reports', () => {
+  test('the run summary links each report type to its own summary', async () => {
+    await buildTree();
+    cli(ROOT);
+
+    const md = await readFile(join(ROOT, '!summary', 'run-summary.md'), 'utf8');
+    // The type row is a link, and it points at a file that exists.
+    const match = /\| \[.*?\]\(<(.+?)>\)/.exec(md);
+    expect(match).not.toBeNull();
+    const target = join(ROOT, '!summary', match![1]!);
+    await expect(access(target)).resolves.toBeUndefined();
+    expect(target.endsWith('.md')).toBe(true);
+  });
+
+  test('a type summary links each case to its own report', async () => {
+    await buildTree();
+    cli(ROOT);
+
+    const dir = join(ROOT, 'reports', 'global_standard_cat', '!summary');
+    const name = (await readdir(dir)).find((f) => f.endsWith('.md'))!;
+    const md = await readFile(join(dir, name), 'utf8');
+
+    const match = /\| \[`.*?`\]\(<(.+?)>\)/.exec(md);
+    expect(match).not.toBeNull();
+    expect(match![1]).toContain('report.md');
+    await expect(access(join(dir, match![1]!))).resolves.toBeUndefined();
+  });
+
+  test('a case report links to the two files it compared', async () => {
+    await buildTree();
+    const dir = join(ROOT, 'reports', 'global_standard_cat', 'case_001');
+    cli(dir);
+
+    const md = await readFile(join(dir, 'results', 'report.md'), 'utf8');
+    expect(md).toContain('](<../golden.xlsx>)');
+    expect(md).toContain('](<../actual.xlsx>)');
+    // Forward slashes whatever the platform: `sep` in that scope is the key
+    // separator, not the path one, and shadowing it once produced `..\golden`.
+    expect(md).not.toMatch(/\]\(<[^>]*\[^>]*>\)/);
+  });
+});

@@ -276,7 +276,11 @@ export async function runCase(
   await Promise.all([
     // Written even when nothing differed: "identical, and here is what was
     // checked to say so" is the result, not the absence of one.
-    writeFile(files.report, formatMarkdownReport(diff, swept, { name, ...options, inputs }), 'utf8'),
+    writeFile(
+      files.report,
+      formatMarkdownReport(diff, swept, { name, ...options, inputs, reportPath: files.report }),
+      'utf8',
+    ),
     writeFile(files.diffJson, JSON.stringify(diff, null, 2), 'utf8'),
     writeLedger(
       files.differences,
