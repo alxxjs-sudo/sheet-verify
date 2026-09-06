@@ -926,6 +926,26 @@ test.describe('a tree of report types', () => {
     expect(out).toContain('case folder of its own');
   });
 
+  test('a stray comparable file in a grouping folder does not swallow the cases under it', async () => {
+    await buildTree();
+    // The day .zip became readable, a pro-forma.zip left in a report-type
+    // folder made that folder look like a case that had failed to come
+    // together. The walk stopped there and 26 real cases below it vanished
+    // from the count, under a headline that read "11 cases, 0 failing".
+    const { default: JSZip } = await import('jszip');
+    const zip = new JSZip();
+    zip.file('policy.csv', 'Ref,Amount\nR-1,10\n');
+    await writeFile(join(ROOT, 'reports', 'pro-forma.zip'),
+      await zip.generateAsync({ type: 'nodebuffer' }));
+
+    const { out } = cli(ROOT);
+    // Every case under reports/ is still found and compared.
+    expect(out).toContain('3 cases');
+    // And the file itself is named rather than passed over.
+    expect(out).toContain('pro-forma.zip');
+    expect(out).toContain('beside the case folders');
+  });
+
   test('an archive on its own is a case, and its members are the sheets', async () => {
     await buildTree();
     const dir = join(ROOT, 'reports', 'srq', 'archive_case');

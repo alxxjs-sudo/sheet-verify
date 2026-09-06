@@ -488,23 +488,40 @@ async function findCases(
     )
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  // A folder holding spreadsheets, or a golden/current pair of folders, was
-  // meant to be a case. Say why it is not one, and stop: descending would
-  // report its golden/ and current/ as two broken cases of their own and bury
-  // the one sentence that explains the folder.
   const role = (name: string) =>
     GOLDEN_DIRS.includes(name.toLowerCase()) || ACTUAL_DIRS.includes(name.toLowerCase());
-  const meant = subdirs.some((e) => role(e.name))
-    || entries.some((e) => e.isFile() && isSpreadsheet(e.name));
+  const roleDirs = subdirs.some((e) => role(e.name));
+  const loose = entries
+    .filter((e) => e.isFile() && isSpreadsheet(e.name))
+    .map((e) => e.name)
+    .sort();
 
   const line = `  ${DISPLAY(relative(root, dir)) || '.'}: ${here}`;
   // A folder that was meant to be a case is reported whatever else the run
   // finds. Reporting it only when nothing runs is how a case that stopped
   // being a case goes unnoticed: the total reads 38 instead of 39, and a
   // number nobody was watching is the whole failure this tool exists to catch.
-  if (meant) {
+  //
+  // Two shapes mean it: a golden/ or current/ folder, or a comparable file
+  // with no folders under it. Both stop the walk, because descending would
+  // report their halves as broken cases of their own and bury the one
+  // sentence that explains the folder.
+  if (roleDirs || (loose.length && !subdirs.length)) {
     broken.push(line);
     return { cases: found, problems, broken };
+  }
+
+  // A comparable file *beside* other folders is a different thing: a download
+  // dropped into a grouping folder. Worth reporting -- nothing compares it --
+  // but the walk has to go on. Stopping here cost 26 real cases the day .zip
+  // became readable and a stray pro-forma.zip made a report-type folder look
+  // like a case: the run said "11 cases, 0 failing" over a tree of 37.
+  if (loose.length) {
+    const [is, it] = loose.length === 1 ? ['is', 'it'] : ['are', 'them'];
+    broken.push(
+      `  ${DISPLAY(relative(root, dir)) || '.'}: [${loose.join(', ')}] ${is} beside the `
+      + `case folders, so nothing compares ${it} — move ${it} into a case, or out of the tree`,
+    );
   }
   // A leaf folder that is not a case is worth reporting; a grouping is not.
   if (!subdirs.length) problems.push(line);
