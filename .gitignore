@@ -64,3 +64,11 @@ basic-template-comparison/
 # template_comparison/templates/, which is the tool's own descriptors and is
 # meant to be committed.
 /templates/
+
+# A copy of the comparison trees' configuration with no report data in it:
+# every meta.json and case.json, in the folders they sit in, so the layout can
+# be handed over or restored without moving a single spreadsheet. Ignored
+# because those files still carry case labels, exposure database names and
+# wizard settings -- the structure is not the secret, but what it is named is.
+structure_export/
+structure-export/
