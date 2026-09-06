@@ -49,9 +49,19 @@ export interface DetectedSheet {
   tables: DetectedTable[];
 }
 
-/** Words that mean "this identifies the row" when a column name ends in one. */
+/**
+ * Words that mean "this identifies the row" when a column name ends in one.
+ *
+ * `period` is here for the return period, which is the row identifier of every
+ * exceedance table these reports print -- and is numeric, so without a word
+ * saying otherwise it is discarded below as a measure. The cost of that was
+ * the whole table matched by position: one return period added to the report
+ * shifted every row under it, and a single configuration change read as
+ * dozens of broken numbers.
+ */
 const KEY_WORDS = new Set([
   'id', 'no', 'nr', 'num', 'number', 'code', 'key', 'ref', 'reference',
+  'period',
 ]);
 
 /** Splits `PolicyId`, `policy_id` and `Policy Id` alike into words. */
@@ -110,6 +120,11 @@ export function detectKeyColumns(headers: string[], rows: string[][]): string[] 
 
   const singles = usable.filter(({ name, i }) => {
     const v = values(i);
+    // Every row has to carry a value. Allowing gaps -- pairing the blanks by
+    // their order of appearance, which layer 1 is willing to do -- was tried
+    // against 109 real cases and took the tree from 4 failing to 12: a column
+    // that identifies half its rows identifies none of them reliably, and a
+    // wrong key pairs rows confidently.
     if (!complete(v) || !distinct(v)) return false;
     // A measure that happens to be distinct is not an identifier. `Amount`
     // is unique across three rows and useless as a key across three thousand,
